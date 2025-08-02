@@ -135,6 +135,11 @@ module.exports = {
                     name: '😀 Reaction Voting', 
                     value: `Custom Emojis: ${reactionCount}\nDirect point awards via reactions`, 
                     inline: true 
+                },
+                { 
+                    name: '🥇 Leaderboard Roles', 
+                    value: `Configured: ${Object.keys(serverConfig.leaderboard_roles || {}).length} roles`, 
+                    inline: true 
                 }
             ])
             .setFooter({ text: 'Select a category to configure specific settings' })
@@ -180,7 +185,12 @@ module.exports = {
                     .setCustomId('config_reactions')
                     .setLabel('😀 Reactions')
                     .setStyle(ButtonStyle.Secondary)
-                    .setDisabled(isInSyncButNotPriority)
+                    .setDisabled(isInSyncButNotPriority),
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles')
+                    .setLabel('🥇 Leaderboard Roles')
+                    .setStyle(ButtonStyle.Secondary)
+                    // Note: Leaderboard roles are always available, even when synced
             );
 
         const row3 = new ActionRowBuilder()
@@ -914,6 +924,15 @@ module.exports = {
                 const roleId = interaction.values[0];
                 await this.showAutoRoleThresholdModal(interaction, roleId);
                 return;
+            } else if (interaction.customId.startsWith('config_leaderboard_role_select_role_')) {
+                const leaderboardType = interaction.customId.split('_').pop();
+                const roleId = interaction.values[0];
+                await this.showLeaderboardRolePositionModal(interaction, roleId, leaderboardType);
+                return;
+            } else if (interaction.customId === 'config_leaderboard_role_edit_select') {
+                const [position, roleId, leaderboardType] = interaction.values[0].split(':');
+                await this.showEditLeaderboardRoleModal(interaction, position, roleId, leaderboardType);
+                return;
             }
         }
         
@@ -936,6 +955,8 @@ module.exports = {
                 await this.showAutoRolesConfig(interaction, serverConfig);
             } else if (interaction.customId === 'config_reactions') {
                 await this.showReactionConfig(interaction, serverConfig);
+            } else if (interaction.customId === 'config_leaderboard_roles') {
+                await this.showLeaderboardRolesConfig(interaction, serverConfig);
             } else if (interaction.customId === 'config_refresh' || interaction.customId === 'config_back_main' || interaction.customId === 'config_main') {
                 const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
                 await this.showMainConfigMenu(interaction, updatedConfig);
@@ -1171,10 +1192,37 @@ module.exports = {
                 await this.removeAutoRole(interaction, serverConfig, threshold, roleId);
             }
             
+            // Handle leaderboard roles configuration (non-modal interactions)
+            else if (interaction.customId === 'config_leaderboard_roles_add_positive') {
+                await this.showAddLeaderboardRoleModal(interaction, 'positive');
+            } else if (interaction.customId === 'config_leaderboard_roles_add_negative') {
+                await this.showAddLeaderboardRoleModal(interaction, 'negative');
+            } else if (interaction.customId === 'config_leaderboard_roles_edit') {
+                await this.showEditLeaderboardRoleSelect(interaction, serverConfig);
+            } else if (interaction.customId === 'config_leaderboard_roles_remove') {
+                await this.showRemoveLeaderboardRoleSelect(interaction, serverConfig);
+            } else if (interaction.customId === 'config_leaderboard_roles_test') {
+                await this.showLeaderboardRoleTestResults(interaction, serverConfig);
+            } else if (interaction.customId === 'config_leaderboard_roles_clear_all') {
+                await this.showClearAllLeaderboardRolesConfirmation(interaction, serverConfig);
+            } else if (interaction.customId === 'config_leaderboard_roles_confirm_clear') {
+                await this.clearAllLeaderboardRoles(interaction, serverConfig);
+            } else if (interaction.customId === 'config_leaderboard_roles_cancel_clear') {
+                await this.showLeaderboardRolesConfig(interaction, serverConfig);
+            } else if (interaction.customId === 'config_leaderboard_roles_strategy_positive') {
+                await this.toggleLeaderboardRoleStrategy(interaction, serverConfig, 'positive');
+            } else if (interaction.customId === 'config_leaderboard_roles_strategy_negative') {
+                await this.toggleLeaderboardRoleStrategy(interaction, serverConfig, 'negative');
+            }
+            
             // Handle reaction config select menus (non-modal interactions)
             else if (interaction.customId === 'config_reaction_remove_select') {
                 const reactionId = interaction.values[0];
                 await this.removeReaction(interaction, serverConfig, reactionId);
+            } else if (interaction.customId === 'config_leaderboard_role_remove_select') {
+                const [position, roleId, leaderboardType] = interaction.values[0].split(':');
+                await this.removeLeaderboardRole(interaction, serverConfig, position, roleId, leaderboardType);
+                return;
             }
             
         } catch (error) {
@@ -1587,6 +1635,167 @@ module.exports = {
                         flags: MessageFlags.Ephemeral
                     });
                 }
+            } else if (interaction.customId.startsWith('config_add_leaderboard_role_position_modal_')) {
+                const leaderboardType = interaction.customId.split('_').pop();
+                const positionValue = interaction.fields.getTextInputValue('leaderboard_position_input');
+                const roleIdValue = interaction.fields.getTextInputValue('leaderboard_role_id_input').trim();
+                const position = parseInt(positionValue);
+                
+                // Get server config first
+                const serverConfig = await DatabaseUtils.getServerConfig(serverId);
+                
+                // Validate position
+                if (isNaN(position) || position < 1 || position > 10) {
+                    await interaction.followUp({
+                        content: '❌ Invalid position value. Please enter a number between 1 and 10.',
+                        flags: MessageFlags.Ephemeral
+                    });
+                    return;
+                }
+                
+                // Check if role exists in the guild (ensure roleIdValue is a string)
+                const roleIdString = String(roleIdValue);
+                const role = interaction.guild.roles.cache.get(roleIdString);
+                if (!role) {
+                    await interaction.followUp({
+                        content: '❌ Role not found in this server. Please try again.',
+                        flags: MessageFlags.Ephemeral
+                    });
+                    return;
+                }
+                
+                // Check if position already exists for this leaderboard type
+                const currentLeaderboardRoles = serverConfig.leaderboard_roles || {};
+                const currentTypeRoles = currentLeaderboardRoles[leaderboardType] || {};
+                if (currentTypeRoles[position]) {
+                    await interaction.followUp({
+                        content: `❌ A role is already configured for ${position}${this.getPositionSuffix(position)} place in the ${leaderboardType} leaderboard. Please use a different position or edit the existing one.`,
+                        flags: MessageFlags.Ephemeral
+                    });
+                    return;
+                }
+                
+                // Verify the bot can still assign this role
+                const assignableRoles = this.getAssignableRoles(interaction.guild);
+                const canAssign = assignableRoles.some(r => String(r.id) === roleIdString);
+                if (!canAssign) {
+                    await interaction.followUp({
+                        content: '❌ This role cannot be assigned by the bot. It may be above the bot\'s highest role or managed by another integration.',
+                        flags: MessageFlags.Ephemeral
+                    });
+                    return;
+                }
+                
+                // Add the new leaderboard role to the correct type
+                const updatedLeaderboardRoles = { ...currentLeaderboardRoles };
+                if (!updatedLeaderboardRoles[leaderboardType]) {
+                    updatedLeaderboardRoles[leaderboardType] = {};
+                }
+                updatedLeaderboardRoles[leaderboardType][position] = roleIdString;
+                await this.updateServerConfig(serverId, { leaderboard_roles: updatedLeaderboardRoles });
+                
+                // Apply the new role configuration immediately
+                try {
+                    const results = await DatabaseUtils.assignLeaderboardRoles(serverId, interaction.guild);
+                    console.log(`🎯 Applied leaderboard roles after config update: ${results.assigned} assigned, ${results.removed} removed`);
+                } catch (roleError) {
+                    console.error('Error applying leaderboard roles after config update:', roleError);
+                    // Don't fail the config update if role assignment fails
+                }
+                
+                // Log the configuration change
+                await this.logConfigChange(interaction, 'Leaderboard Roles', 
+                    `Added ${leaderboardType} role configuration`, 
+                    `${position}${this.getPositionSuffix(position)} place → @${role.name}`
+                );
+                
+                // Show success message and return to leaderboard roles config
+                const embed = new EmbedBuilder()
+                    .setColor('#00ff00')
+                    .setTitle(`✅ ${leaderboardType === 'positive' ? 'Positive' : 'Negative'} Leaderboard Role Added`)
+                    .setDescription(`Successfully configured ${leaderboardType} leaderboard role:\n\n**${position}${this.getPositionSuffix(position)} place → @${role.name}**`)
+                    .setFooter({ text: `Users will automatically receive this role when they reach this position on the ${leaderboardType} leaderboard.` });
+
+                const row = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('config_leaderboard_roles')
+                            .setLabel('← Back to Leaderboard Roles')
+                            .setStyle(ButtonStyle.Primary)
+                    );
+
+                // Use editReply since interaction was deferred
+                await interaction.editReply({ embeds: [embed], components: [row] });
+            } else if (interaction.customId === 'config_edit_leaderboard_role_modal') {
+                const positionValue = interaction.fields.getTextInputValue('leaderboard_edit_position_input');
+                const oldPosition = interaction.fields.getTextInputValue('leaderboard_old_position_input');
+                const roleId = interaction.fields.getTextInputValue('leaderboard_edit_role_input');
+                const leaderboardType = interaction.fields.getTextInputValue('leaderboard_edit_type_input');
+                const newPosition = parseInt(positionValue);
+                
+                // Validate new position
+                if (isNaN(newPosition) || newPosition < 1 || newPosition > 10) {
+                    await interaction.followUp({
+                        content: '❌ Invalid position value. Please enter a number between 1 and 10.',
+                        flags: MessageFlags.Ephemeral
+                    });
+                    return;
+                }
+                
+                // Check if new position already exists (and it's different from the old one)
+                const currentLeaderboardRoles = serverConfig.leaderboard_roles || {};
+                const currentTypeRoles = currentLeaderboardRoles[leaderboardType] || {};
+                if (currentTypeRoles[newPosition] && newPosition.toString() !== oldPosition) {
+                    await interaction.followUp({
+                        content: `❌ A role is already configured for ${newPosition}${this.getPositionSuffix(newPosition)} place in the ${leaderboardType} leaderboard. Please use a different position.`,
+                        flags: MessageFlags.Ephemeral
+                    });
+                    return;
+                }
+                
+                // Update the leaderboard role position
+                const updatedLeaderboardRoles = { ...currentLeaderboardRoles };
+                if (!updatedLeaderboardRoles[leaderboardType]) {
+                    updatedLeaderboardRoles[leaderboardType] = {};
+                }
+                delete updatedLeaderboardRoles[leaderboardType][oldPosition]; // Remove old position
+                updatedLeaderboardRoles[leaderboardType][newPosition] = String(roleId); // Add new position as string
+                
+                await this.updateServerConfig(serverId, { leaderboard_roles: updatedLeaderboardRoles });
+                
+                // Apply the updated role configuration immediately
+                try {
+                    const results = await DatabaseUtils.assignLeaderboardRoles(serverId, interaction.guild);
+                    console.log(`🎯 Applied leaderboard roles after edit: ${results.assigned} assigned, ${results.removed} removed`);
+                } catch (roleError) {
+                    console.error('Error applying leaderboard roles after edit:', roleError);
+                    // Don't fail the config update if role assignment fails
+                }
+                
+                // Log the configuration change
+                const role = interaction.guild.roles.cache.get(roleId);
+                await this.logConfigChange(interaction, 'Leaderboard Roles', 
+                    `${oldPosition}${this.getPositionSuffix(oldPosition)} place → @${role.name}`, 
+                    `${newPosition}${this.getPositionSuffix(newPosition)} place → @${role.name}`
+                );
+                
+                // Show success message and return to leaderboard roles config
+                const embed = new EmbedBuilder()
+                    .setColor('#00ff00')
+                    .setTitle('✅ Leaderboard Role Updated')
+                    .setDescription(`Successfully updated leaderboard role position:\n\n**${oldPosition}${this.getPositionSuffix(oldPosition)} place → ${newPosition}${this.getPositionSuffix(newPosition)} place → @${role.name}**`)
+                    .setFooter({ text: 'Users will automatically receive this role when they reach this position on the leaderboard.' });
+
+                const row = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('config_leaderboard_roles')
+                            .setLabel('← Back to Leaderboard Roles')
+                            .setStyle(ButtonStyle.Primary)
+                    );
+
+                // Use editReply since interaction was deferred
+                await interaction.editReply({ embeds: [embed], components: [row] });
             }
         } catch (error) {
             logger.errorWithStack('Error handling modal submit', error, 'MODAL');
@@ -2096,6 +2305,1000 @@ module.exports = {
             console.error('Error removing auto role:', error);
             await this.updateInteraction(interaction, {
                 content: '❌ Error removing auto role. Please try again.',
+                components: []
+            });
+        }
+    },
+
+    // ================================
+    // LEADERBOARD ROLES CONFIG
+    // ================================
+
+    async showLeaderboardRolesConfig(interaction, serverConfig) {
+        const leaderboardRoles = serverConfig.leaderboard_roles || {};
+        const positiveRoles = leaderboardRoles.positive || {};
+        const negativeRoles = leaderboardRoles.negative || {};
+        const assignmentStrategy = leaderboardRoles.assignment_strategy || {};
+        
+        const positiveEntries = Object.entries(positiveRoles).sort(([a], [b]) => parseInt(a) - parseInt(b));
+        const negativeEntries = Object.entries(negativeRoles).sort(([a], [b]) => parseInt(a) - parseInt(b));
+        
+        // Get strategy display
+        const positiveStrategy = assignmentStrategy.positive || 'server-local';
+        const negativeStrategy = assignmentStrategy.negative || 'server-local';
+        
+        const getStrategyText = (strategy) => {
+            switch (strategy) {
+                case 'global':
+                    return '🌍 **Global** - Only assign to actual global leaderboard positions';
+                case 'global-filtered':
+                    return '🌐 **Global (Server-Filtered)** - Global leaderboard but only server members';
+                default: // 'server-local'
+                    return '🏠 **Server-Local** - Assign to highest-ranking users in this server';
+            }
+        };
+        
+        const positiveStrategyText = getStrategyText(positiveStrategy);
+        const negativeStrategyText = getStrategyText(negativeStrategy);
+        
+        const embed = new EmbedBuilder()
+            .setColor(serverConfig.embed_color || '#5865F2')
+            .setTitle('🥇 Leaderboard Roles Configuration')
+            .setDescription('Configure automatic role assignment for leaderboard positions.\n\n**How it works:** Users in specific leaderboard positions (1st, 2nd, 3rd, etc.) will automatically receive the configured Discord roles. You can configure separate roles and assignment strategies for positive and negative leaderboards.')
+            .addFields([
+                { 
+                    name: '🏆 Positive Leaderboard Roles', 
+                    value: (positiveEntries.length > 0 
+                        ? positiveEntries.map(([position, roleId]) => {
+                            // Try to get role name, fallback to ID if role doesn't exist
+                            const role = interaction.guild.roles.cache.get(roleId);
+                            const roleName = role ? `@${role.name}` : `<@&${roleId}> (Role not found)`;
+                            return `**${position}${this.getPositionSuffix(position)} place:** ${roleName}`;
+                        }).join('\n')
+                        : 'No positive leaderboard roles configured yet') + 
+                        `\n**Assignment Strategy:** ${getStrategyText(positiveStrategy).replace(/\*\*/g, '')}`, 
+                    inline: false 
+                },
+                { 
+                    name: '💀 Negative Leaderboard Roles', 
+                    value: (negativeEntries.length > 0 
+                        ? negativeEntries.map(([position, roleId]) => {
+                            // Try to get role name, fallback to ID if role doesn't exist
+                            const role = interaction.guild.roles.cache.get(roleId);
+                            const roleName = role ? `@${role.name}` : `<@&${roleId}> (Role not found)`;
+                            return `**${position}${this.getPositionSuffix(position)} place:** ${roleName}`;
+                        }).join('\n')
+                        : 'No negative leaderboard roles configured yet') + 
+                        `\n**Assignment Strategy:** ${getStrategyText(negativeStrategy).replace(/\*\*/g, '')}`, 
+                    inline: false 
+                },
+                {
+                    name: 'Strategy Explanation',
+                    value: '**🌍 Global:**\nOnly the real global #1 gets the #1 role\nIf real global #1 isn\'t in the server → no one gets the role\n\n**🌐 Global (Server-Filtered):**\nIf real global #1 isn\'t in server → next person in global ranking who IS in server gets it\nMaintains global ranking order, just skips missing people\n\n**🏠 Server-Local:**\nWhoever has highest score in that specific server gets #1 role\nCompletely ignores what\'s happening globally',
+                    inline: false
+                }
+            ])
+            .setFooter({ text: 'Leaderboard roles provide recognition for top performers and encourage competition' });
+
+        const row1 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles_add_positive')
+                    .setLabel('🏆 Add Positive Role')
+                    .setStyle(ButtonStyle.Success)
+                    .setDisabled(positiveEntries.length >= 10), // Limit to 10 positive roles
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles_add_negative')
+                    .setLabel('💀 Add Negative Role')
+                    .setStyle(ButtonStyle.Success)
+                    .setDisabled(negativeEntries.length >= 10), // Limit to 10 negative roles
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles_edit')
+                    .setLabel('✏️ Edit Position')
+                    .setStyle(ButtonStyle.Primary)
+                    .setDisabled(positiveEntries.length === 0 && negativeEntries.length === 0)
+            );
+
+        const row2 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles_strategy_positive')
+                    .setLabel(`🏆 Positive: ${positiveStrategy === 'global' ? '🌍' : positiveStrategy === 'global-filtered' ? '🌐' : '🏠'}`)
+                    .setStyle(positiveStrategy !== 'server-local' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+                    .setDisabled(false),
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles_strategy_negative')
+                    .setLabel(`💀 Negative: ${negativeStrategy === 'global' ? '🌍' : negativeStrategy === 'global-filtered' ? '🌐' : '🏠'}`)
+                    .setStyle(negativeStrategy !== 'server-local' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+                    .setDisabled(false),
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles_remove')
+                    .setLabel('🗑️ Remove Role')
+                    .setStyle(ButtonStyle.Danger)
+                    .setDisabled(positiveEntries.length === 0 && negativeEntries.length === 0)
+            );
+
+        const row3 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles_test')
+                    .setLabel('🧪 Test Assignment')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(positiveEntries.length === 0 && negativeEntries.length === 0),
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles_clear_all')
+                    .setLabel('🚨 Clear All')
+                    .setStyle(ButtonStyle.Danger)
+                    .setDisabled(positiveEntries.length === 0 && negativeEntries.length === 0),
+                new ButtonBuilder()
+                    .setCustomId('config_back_main')
+                    .setLabel('← Back')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        await this.updateInteraction(interaction, { embeds: [embed], components: [row1, row2, row3] });
+    },
+
+    // Helper method to get position suffix (1st, 2nd, 3rd, etc.)
+    getPositionSuffix(position) {
+        const pos = parseInt(position);
+        if (pos >= 11 && pos <= 13) return 'th';
+        switch (pos % 10) {
+            case 1: return 'st';
+            case 2: return 'nd';
+            case 3: return 'rd';
+            default: return 'th';
+        }
+    },
+
+    // ================================
+    // LEADERBOARD ROLES CONFIG FUNCTIONS
+    // ================================
+
+    async showAddLeaderboardRoleModal(interaction, leaderboardType = 'positive') {
+        // Get all roles the bot can assign
+        const assignableRoles = this.getAssignableRoles(interaction.guild);
+        const serverConfig = await DatabaseUtils.getServerConfig(interaction.guild.id);
+        const leaderboardRoles = serverConfig.leaderboard_roles || {};
+        const typeRoles = leaderboardRoles[leaderboardType] || {};
+        
+        const availableRoles = assignableRoles.filter(role => {
+            // Filter out roles that are already configured for this leaderboard type
+            return !Object.values(typeRoles).includes(role.id);
+        });
+
+        if (availableRoles.length === 0) {
+            const embed = new EmbedBuilder()
+                .setColor('#ff0000')
+                .setTitle('❌ No Available Roles')
+                .setDescription('All assignable roles are already configured for leaderboard positions, or no roles are available for the bot to assign.')
+                .setFooter({ text: 'Make sure the bot has permission to assign roles and that roles are below the bot\'s highest role.' });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_leaderboard_roles')
+                        .setLabel('← Back to Leaderboard Roles')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await this.updateInteraction(interaction, { embeds: [embed], components: [row] });
+            return;
+        }
+
+        const embed = new EmbedBuilder()
+            .setColor(serverConfig.embed_color || '#5865F2')
+            .setTitle(`➕ Add ${leaderboardType === 'positive' ? '🏆 Positive' : '💀 Negative'} Leaderboard Role`)
+            .setDescription(`Select a role to configure for ${leaderboardType === 'positive' ? 'positive' : 'negative'} leaderboard position assignment:`)
+            .addFields([
+                {
+                    name: 'Available Roles',
+                    value: availableRoles.length > 0 
+                        ? availableRoles.slice(0, 10).map(role => `• @${role.name}`).join('\n')
+                        : 'No available roles',
+                    inline: false
+                },
+                {
+                    name: 'Next Step',
+                    value: 'After selecting a role, you\'ll set the leaderboard position (1st, 2nd, 3rd, etc.) required to receive it.',
+                    inline: false
+                }
+            ])
+            .setFooter({ text: `${availableRoles.length} assignable role${availableRoles.length !== 1 ? 's' : ''} available` });
+
+        // Create select menu with available roles (max 25 options)
+        const roleOptions = availableRoles.slice(0, 25).map(role => ({
+            label: role.name,
+            value: role.id,
+            description: `Role position: ${role.position}`,
+            emoji: role.unicodeEmoji || undefined
+        }));
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId(`config_leaderboard_role_select_role_${leaderboardType}`)
+            .setPlaceholder('Select a role to configure...')
+            .addOptions(roleOptions);
+
+        const row1 = new ActionRowBuilder().addComponents(selectMenu);
+        const row2 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles')
+                    .setLabel('← Back')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        // Use updateInteraction to properly handle the interface update
+        await this.updateInteraction(interaction, { embeds: [embed], components: [row1, row2] });
+    },
+
+    async showLeaderboardRolePositionModal(interaction, roleId, leaderboardType = 'positive') {
+        const modal = new ModalBuilder()
+            .setCustomId(`config_add_leaderboard_role_position_modal_${leaderboardType}`)
+            .setTitle(`Set ${leaderboardType === 'positive' ? 'Positive' : 'Negative'} Leaderboard Position`);
+
+        const positionInput = new TextInputBuilder()
+            .setCustomId('leaderboard_position_input')
+            .setLabel('Leaderboard Position')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('Enter position (1, 2, 3, etc.)')
+            .setMinLength(1)
+            .setMaxLength(2)
+            .setRequired(true);
+
+        const roleIdInput = new TextInputBuilder()
+            .setCustomId('leaderboard_role_id_input')
+            .setLabel('Role ID (do not edit)')
+            .setStyle(TextInputStyle.Short)
+            .setValue(roleId)
+            .setRequired(true);
+
+        const leaderboardTypeInput = new TextInputBuilder()
+            .setCustomId('leaderboard_type_input')
+            .setLabel('Leaderboard Type (do not edit)')
+            .setStyle(TextInputStyle.Short)
+            .setValue(leaderboardType)
+            .setRequired(true);
+
+        const row1 = new ActionRowBuilder().addComponents(positionInput);
+        const row2 = new ActionRowBuilder().addComponents(roleIdInput);
+        const row3 = new ActionRowBuilder().addComponents(leaderboardTypeInput);
+        modal.addComponents(row1, row2, row3);
+
+        await interaction.showModal(modal);
+    },
+
+    async showEditLeaderboardRoleSelect(interaction, serverConfig) {
+        const leaderboardRoles = serverConfig.leaderboard_roles || {};
+        const positiveRoles = leaderboardRoles.positive || {};
+        const negativeRoles = leaderboardRoles.negative || {};
+        const allRoles = { ...positiveRoles, ...negativeRoles };
+        const roleEntries = Object.entries(allRoles);
+
+        if (roleEntries.length === 0) {
+            const embed = new EmbedBuilder()
+                .setColor('#ff0000')
+                .setTitle('❌ No Leaderboard Roles Configured')
+                .setDescription('There are no leaderboard roles to edit. Add some first!')
+                .setFooter({ text: 'Use the "Add Role" button to configure leaderboard roles.' });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_leaderboard_roles')
+                        .setLabel('← Back to Leaderboard Roles')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await this.updateInteraction(interaction, { embeds: [embed], components: [row] });
+            return;
+        }
+
+        const embed = new EmbedBuilder()
+            .setColor(serverConfig.embed_color || '#5865F2')
+            .setTitle('✏️ Edit Leaderboard Role Position')
+            .setDescription('Select a leaderboard role to edit its position:')
+            .setFooter({ text: 'You can change which position gets this role' });
+
+        const roleOptions = roleEntries.map(([position, roleId]) => {
+            const role = interaction.guild.roles.cache.get(roleId);
+            const roleName = role ? role.name : 'Unknown Role';
+            const leaderboardType = positiveRoles[position] ? 'positive' : 'negative';
+            return {
+                label: `${position}${this.getPositionSuffix(position)} place - ${roleName}`,
+                value: `${position}:${roleId}:${leaderboardType}`,
+                description: `Currently assigned to ${position}${this.getPositionSuffix(position)} place (${leaderboardType})`
+            };
+        });
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('config_leaderboard_role_edit_select')
+            .setPlaceholder('Select a role to edit...')
+            .addOptions(roleOptions);
+
+        const row1 = new ActionRowBuilder().addComponents(selectMenu);
+        const row2 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles')
+                    .setLabel('← Back')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        await this.updateInteraction(interaction, { embeds: [embed], components: [row1, row2] });
+    },
+
+    async showRemoveLeaderboardRoleSelect(interaction, serverConfig) {
+        const leaderboardRoles = serverConfig.leaderboard_roles || {};
+        const positiveRoles = leaderboardRoles.positive || {};
+        const negativeRoles = leaderboardRoles.negative || {};
+        const allRoles = { ...positiveRoles, ...negativeRoles };
+        const roleEntries = Object.entries(allRoles);
+
+        if (roleEntries.length === 0) {
+            const embed = new EmbedBuilder()
+                .setColor('#ff0000')
+                .setTitle('❌ No Leaderboard Roles Configured')
+                .setDescription('There are no leaderboard roles to remove. Add some first!')
+                .setFooter({ text: 'Use the "Add Role" button to configure leaderboard roles.' });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_leaderboard_roles')
+                        .setLabel('← Back to Leaderboard Roles')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await this.updateInteraction(interaction, { embeds: [embed], components: [row] });
+            return;
+        }
+
+        const embed = new EmbedBuilder()
+            .setColor(serverConfig.embed_color || '#5865F2')
+            .setTitle('🗑️ Remove Leaderboard Role')
+            .setDescription('Select a leaderboard role to remove:')
+            .setFooter({ text: 'This will remove the role configuration but not the role itself' });
+
+        const roleOptions = roleEntries.map(([position, roleId]) => {
+            const role = interaction.guild.roles.cache.get(roleId);
+            const roleName = role ? role.name : 'Unknown Role';
+            const leaderboardType = positiveRoles[position] ? 'positive' : 'negative';
+            return {
+                label: `${position}${this.getPositionSuffix(position)} place - ${roleName}`,
+                value: `${position}:${roleId}:${leaderboardType}`,
+                description: `Currently assigned to ${position}${this.getPositionSuffix(position)} place (${leaderboardType})`
+            };
+        });
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('config_leaderboard_role_remove_select')
+            .setPlaceholder('Select a role to remove...')
+            .addOptions(roleOptions);
+
+        const row1 = new ActionRowBuilder().addComponents(selectMenu);
+        const row2 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles')
+                    .setLabel('← Back')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        await this.updateInteraction(interaction, { embeds: [embed], components: [row1, row2] });
+    },
+
+    async showLeaderboardRoleTestResults(interaction, serverConfig) {
+        const serverId = interaction.guild.id;
+        const leaderboardRoles = serverConfig.leaderboard_roles || {};
+        const positiveRoles = leaderboardRoles.positive || {};
+        const negativeRoles = leaderboardRoles.negative || {};
+        const assignmentStrategy = leaderboardRoles.assignment_strategy || {};
+        
+        if (Object.keys(positiveRoles).length === 0 && Object.keys(negativeRoles).length === 0) {
+            const embed = new EmbedBuilder()
+                .setColor('#ff0000')
+                .setTitle('❌ No Leaderboard Roles Configured')
+                .setDescription('There are no leaderboard roles to test. Add some first!')
+                .setFooter({ text: 'Use the "Add Role" buttons to configure leaderboard roles.' });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_leaderboard_roles')
+                        .setLabel('← Back to Leaderboard Roles')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await this.updateInteraction(interaction, { embeds: [embed], components: [row] });
+            return;
+        }
+
+        try {
+            // Get assignment strategies
+            const positiveStrategy = assignmentStrategy.positive || 'server-local';
+            const negativeStrategy = assignmentStrategy.negative || 'server-local';
+            
+            // Get current leaderboard
+            const leaderboard = await DatabaseUtils.getLeaderboard(serverId, 100);
+            let positiveLeaderboard = leaderboard.filter(entry => entry.total_score > 0).slice(0, 10);
+            let negativeLeaderboard = leaderboard.filter(entry => entry.total_score < 0)
+                .sort((a, b) => a.total_score - b.total_score).slice(0, 10);
+
+            // Apply strategy filtering
+            if (positiveStrategy === 'server-local' || positiveStrategy === 'global-filtered') {
+                positiveLeaderboard = await this.filterLeaderboardForGuild(positiveLeaderboard, interaction.guild);
+            }
+            if (negativeStrategy === 'server-local' || negativeStrategy === 'global-filtered') {
+                negativeLeaderboard = await this.filterLeaderboardForGuild(negativeLeaderboard, interaction.guild);
+            }
+
+            let positiveTestResults = '';
+            for (let i = 0; i < positiveLeaderboard.length; i++) {
+                const entry = positiveLeaderboard[i];
+                const position = i + 1;
+                const roleId = positiveRoles[position];
+                
+                if (roleId) {
+                    const role = interaction.guild.roles.cache.get(roleId);
+                    const roleName = role ? `@${role.name}` : `<@&${roleId}> (Role not found)`;
+                    
+                    // Check if user is actually in guild
+                    let memberStatus = '';
+                    try {
+                        await interaction.guild.members.fetch(String(entry.user_id));
+                        memberStatus = '✅';
+                    } catch {
+                        memberStatus = positiveStrategy === 'global' ? '❌ (not in server, will skip)' : '❌ (filtered out)';
+                    }
+                    
+                    positiveTestResults += `${position}${this.getPositionSuffix(position)}: <@${entry.user_id}> (${entry.total_score} pts) → ${roleName} ${memberStatus}\n`;
+                }
+            }
+
+            let negativeTestResults = '';
+            for (let i = 0; i < negativeLeaderboard.length; i++) {
+                const entry = negativeLeaderboard[i];
+                const position = i + 1;
+                const roleId = negativeRoles[position];
+                
+                if (roleId) {
+                    const role = interaction.guild.roles.cache.get(roleId);
+                    const roleName = role ? `@${role.name}` : `<@&${roleId}> (Role not found)`;
+                    
+                    // Check if user is actually in guild
+                    let memberStatus = '';
+                    try {
+                        await interaction.guild.members.fetch(String(entry.user_id));
+                        memberStatus = '✅';
+                    } catch {
+                        memberStatus = negativeStrategy === 'global' ? '❌ (not in server, will skip)' : '❌ (filtered out)';
+                    }
+                    
+                    negativeTestResults += `${position}${this.getPositionSuffix(position)}: <@${entry.user_id}> (${entry.total_score} pts) → ${roleName} ${memberStatus}\n`;
+                }
+            }
+
+            const embed = new EmbedBuilder()
+                .setColor(serverConfig.embed_color || '#5865F2')
+                .setTitle('🧪 Leaderboard Role Test Results')
+                .setDescription('Preview of current leaderboard role assignments based on your configuration:')
+                .addFields([
+                    {
+                        name: `🏆 Positive Leaderboard (${positiveStrategy === 'global' ? '🌍 Global' : positiveStrategy === 'global-filtered' ? '🌐 Global (Server-Filtered)' : '🏠 Server-Local'})`,
+                        value: positiveTestResults || '*No positive roles configured*',
+                        inline: false
+                    },
+                    {
+                        name: `💀 Negative Leaderboard (${negativeStrategy === 'global' ? '🌍 Global' : negativeStrategy === 'global-filtered' ? '🌐 Global (Server-Filtered)' : '🏠 Server-Local'})`,
+                        value: negativeTestResults || '*No negative roles configured*',
+                        inline: false
+                    },
+                    {
+                        name: 'Legend',
+                        value: '✅ = Role will be assigned\n❌ = User not in server (assignment will be skipped)',
+                        inline: false
+                    }
+                ])
+                .setFooter({ text: 'This is a preview only. Roles are not actually assigned.' });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_leaderboard_roles')
+                        .setLabel('← Back to Leaderboard Roles')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await this.updateInteraction(interaction, { embeds: [embed], components: [row] });
+        } catch (error) {
+            console.error('Error testing leaderboard roles:', error);
+            await this.updateInteraction(interaction, {
+                content: '❌ Error testing leaderboard roles. Please try again.',
+                components: []
+            });
+        }
+    },
+
+    // Helper function to filter leaderboard for server-local strategy testing
+    async filterLeaderboardForGuild(leaderboard, guild) {
+        const filteredLeaderboard = [];
+        
+        for (const entry of leaderboard) {
+            try {
+                await guild.members.fetch(String(entry.user_id));
+                filteredLeaderboard.push(entry);
+            } catch {
+                // User not in guild, skip for server-local strategy
+            }
+        }
+        
+        return filteredLeaderboard;
+    },
+
+    async showClearAllLeaderboardRolesConfirmation(interaction, serverConfig) {
+        const leaderboardRoles = serverConfig.leaderboard_roles || {};
+        const positiveRoles = leaderboardRoles.positive || {};
+        const negativeRoles = leaderboardRoles.negative || {};
+        const totalRoleCount = Object.keys(positiveRoles).length + Object.keys(negativeRoles).length;
+
+        if (totalRoleCount === 0) {
+            const embed = new EmbedBuilder()
+                .setColor('#ff0000')
+                .setTitle('❌ No Leaderboard Roles to Clear')
+                .setDescription('There are no leaderboard roles configured to clear.')
+                .setFooter({ text: 'Add some leaderboard roles first!' });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_leaderboard_roles')
+                        .setLabel('← Back to Leaderboard Roles')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await this.updateInteraction(interaction, { embeds: [embed], components: [row] });
+            return;
+        }
+
+        const embed = new EmbedBuilder()
+            .setColor('#ff9900')
+            .setTitle('⚠️ Clear All Leaderboard Roles')
+            .setDescription(`Are you sure you want to clear all ${totalRoleCount} leaderboard role configuration${totalRoleCount !== 1 ? 's' : ''}?\n\n**This action cannot be undone!**`)
+            .addFields([
+                {
+                    name: '🏆 Positive Leaderboard Roles',
+                    value: Object.entries(positiveRoles).map(([position, roleId]) => {
+                        const role = interaction.guild.roles.cache.get(roleId);
+                        const roleName = role ? `@${role.name}` : `<@&${roleId}> (Role not found)`;
+                        return `**${position}${this.getPositionSuffix(position)} place:** ${roleName}`;
+                    }).join('\n') || '*No positive roles configured*',
+                    inline: false
+                },
+                {
+                    name: '💀 Negative Leaderboard Roles',
+                    value: Object.entries(negativeRoles).map(([position, roleId]) => {
+                        const role = interaction.guild.roles.cache.get(roleId);
+                        const roleName = role ? `@${role.name}` : `<@&${roleId}> (Role not found)`;
+                        return `**${position}${this.getPositionSuffix(position)} place:** ${roleName}`;
+                    }).join('\n') || '*No negative roles configured*',
+                    inline: false
+                }
+            ])
+            .setFooter({ text: 'Users who currently have these roles will keep them.' });
+
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles_confirm_clear')
+                    .setLabel('🗑️ Yes, Clear All')
+                    .setStyle(ButtonStyle.Danger),
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles_cancel_clear')
+                    .setLabel('❌ Cancel')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        await this.updateInteraction(interaction, { embeds: [embed], components: [row] });
+    },
+
+    async clearAllLeaderboardRoles(interaction, serverConfig) {
+        const serverId = interaction.guild.id;
+        
+        try {
+            // Fetch fresh server config to ensure we have the latest leaderboard roles
+            const freshServerConfig = await DatabaseUtils.getServerConfig(serverId);
+            console.log(`🔍 Fresh server config leaderboard_roles:`, JSON.stringify(freshServerConfig.leaderboard_roles, null, 2));
+            
+            const leaderboardRoles = freshServerConfig.leaderboard_roles || {};
+            
+            // Support both old flat format and new nested format
+            let positiveRoles = {};
+            let negativeRoles = {};
+            let allRoleIds = [];
+            
+            if (leaderboardRoles.positive || leaderboardRoles.negative) {
+                // New nested format
+                positiveRoles = leaderboardRoles.positive || {};
+                negativeRoles = leaderboardRoles.negative || {};
+                allRoleIds = [...Object.values(positiveRoles), ...Object.values(negativeRoles)];
+            } else {
+                // Old flat format - treat all as general leaderboard roles
+                allRoleIds = Object.values(leaderboardRoles);
+            }
+            
+            const totalRoleCount = allRoleIds.length;
+            
+            console.log(`🎯 About to clear ${totalRoleCount} leaderboard roles`);
+            console.log(`📋 Positive roles:`, JSON.stringify(positiveRoles, null, 2));
+            console.log(`📋 Negative roles:`, JSON.stringify(negativeRoles, null, 2));
+            console.log(`📋 All role IDs to remove:`, allRoleIds);
+            
+            // Remove all roles from users BEFORE clearing the configuration
+            try {
+                let removedCount = 0;
+                
+                console.log(`🎯 Processing ${allRoleIds.length} configured roles for removal`);
+                for (const roleId of allRoleIds) {
+                    try {
+                        const roleIdString = String(roleId);
+                        
+                        // Force fetch the role from Discord API to ensure we have fresh data
+                        let role;
+                        try {
+                            role = await interaction.guild.roles.fetch(roleIdString);
+                            console.log(`🔍 Processing role ${roleIdString}: fetched fresh (${role.name})`);
+                        } catch (fetchError) {
+                            // If fetch fails, try cache as fallback
+                            role = interaction.guild.roles.cache.get(roleIdString);
+                            console.log(`🔍 Processing role ${roleIdString}: ${role ? `found in cache (${role.name})` : 'NOT FOUND'}`);
+                        }
+                        
+                        if (role) {
+                            // Try to get fresh members with this role but with timeout to prevent hanging
+                            try {
+                                // First try the role's members collection
+                                let membersWithRole = role.members;
+                                console.log(`👥 Role ${role.name} has ${membersWithRole.size} members (from role.members)`);
+                                
+                                // If no members found in role.members, try alternative detection methods
+                                if (membersWithRole.size === 0) {
+                                    console.log(`🔄 Trying alternative member detection for role ${role.name}`);
+                                    
+                                    // Method 1: Scan cached members
+                                    const cachedMembers = interaction.guild.members.cache;
+                                    const cachedMembersWithRole = cachedMembers.filter(member => member.roles.cache.has(roleIdString));
+                                    console.log(`👥 Found ${cachedMembersWithRole.size} members with role ${role.name} (from cache scan)`);
+                                    
+                                    if (cachedMembersWithRole.size > 0) {
+                                        membersWithRole = cachedMembersWithRole;
+                                    } else {
+                                        // Method 2: Check if we can identify who should have this role based on leaderboard
+                                        console.log(`🔄 Checking leaderboard for who should have role ${role.name}`);
+                                        try {
+                                            // Get current leaderboard to see who should have the role
+                                            const leaderboard = await DatabaseUtils.getLeaderboard(serverId, 10);
+                                            const positiveLeaderboard = leaderboard.filter(entry => entry.total_score > 0);
+                                            const negativeLeaderboard = leaderboard.filter(entry => entry.total_score < 0)
+                                                .sort((a, b) => a.total_score - b.total_score);
+                                            
+                                            // Check if this role corresponds to a specific position
+                                            const currentConfig = freshServerConfig.leaderboard_roles;
+                                            let expectedUsersWithRole = [];
+                                            
+                                            // Check positive roles
+                                            if (currentConfig.positive) {
+                                                for (const [position, configRoleId] of Object.entries(currentConfig.positive)) {
+                                                    if (configRoleId === roleIdString && positiveLeaderboard[parseInt(position) - 1]) {
+                                                        const userId = positiveLeaderboard[parseInt(position) - 1].user_id;
+                                                        console.log(`📍 User ${userId} should have role ${role.name} (positive position ${position})`);
+                                                        expectedUsersWithRole.push(userId);
+                                                    }
+                                                }
+                                            }
+                                            
+                                            // Check negative roles
+                                            if (currentConfig.negative) {
+                                                for (const [position, configRoleId] of Object.entries(currentConfig.negative)) {
+                                                    if (configRoleId === roleIdString && negativeLeaderboard[parseInt(position) - 1]) {
+                                                        const userId = negativeLeaderboard[parseInt(position) - 1].user_id;
+                                                        console.log(`📍 User ${userId} should have role ${role.name} (negative position ${position})`);
+                                                        expectedUsersWithRole.push(userId);
+                                                    }
+                                                }
+                                            }
+                                            
+                                            // Brute force approach: Just try to remove the role from everyone who might have it
+                                            // Since Discord cache is unreliable, let's just attempt removal on likely candidates
+                                            console.log(`💪 Using brute force removal for role ${role.name}`);
+                                            let actualRemovals = 0;
+                                            
+                                            for (const userId of expectedUsersWithRole) {
+                                                try {
+                                                    const member = await interaction.guild.members.fetch(String(userId));
+                                                    console.log(`🔄 Attempting to remove role ${role.name} from ${member.user.tag}`);
+                                                    
+                                                    // Just try to remove the role - Discord will silently ignore if they don't have it
+                                                    await member.roles.remove(roleIdString, 'Leaderboard roles cleared - brute force removal');
+                                                    actualRemovals++;
+                                                    console.log(`✅ Attempted removal of role ${role.name} from ${member.user.tag}`);
+                                                } catch (removeError) {
+                                                    console.log(`⚠️ Could not remove role from user ${userId}:`, removeError.message);
+                                                }
+                                            }
+                                            
+                                            console.log(`👥 Attempted ${actualRemovals} role removals for ${role.name}`);
+                                            removedCount += actualRemovals;
+                                        } catch (leaderboardError) {
+                                            console.log(`⚠️ Could not check leaderboard:`, leaderboardError.message);
+                                        }
+                                    }
+                                }
+                                
+                                // Note: Role removal is now handled in the brute force section above
+                            } catch (memberError) {
+                                console.error(`Error processing members for role ${role.name}:`, memberError);
+                                // Continue with other roles even if this one fails
+                            }
+                        } else {
+                            console.log(`⚠️ Role ${roleIdString} not found in guild`);
+                        }
+                    } catch (error) {
+                        console.error(`Error removing role ${roleId}:`, error);
+                    }
+                }
+                console.log(`🎯 Removed ${removedCount} role assignments before clearing configuration`);
+            } catch (roleError) {
+                console.error('Error removing roles before clear all:', roleError);
+                // Continue with clearing config even if role removal fails
+            }
+            
+            // Now clear all leaderboard roles from configuration
+            await this.updateServerConfig(serverId, { leaderboard_roles: {} });
+            
+            // Log the configuration change
+            await this.logConfigChange(interaction, 'Leaderboard Roles', 
+                `${totalRoleCount} roles configured`, 
+                'All leaderboard roles cleared'
+            );
+            
+            const embed = new EmbedBuilder()
+                .setColor('#00ff00')
+                .setTitle('✅ All Leaderboard Roles Cleared')
+                .setDescription(`Successfully cleared all ${totalRoleCount} leaderboard role configuration${totalRoleCount !== 1 ? 's' : ''}.`)
+                .setFooter({ text: 'Users who currently have these roles will keep them.' });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_leaderboard_roles')
+                        .setLabel('← Back to Leaderboard Roles')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await this.updateInteraction(interaction, { embeds: [embed], components: [row] });
+        } catch (error) {
+            console.error('Error clearing leaderboard roles:', error);
+            await this.updateInteraction(interaction, {
+                content: '❌ Error clearing leaderboard roles. Please try again.',
+                components: []
+            });
+        }
+    },
+
+    async toggleLeaderboardRoleStrategy(interaction, serverConfig, leaderboardType) {
+        const serverId = interaction.guild.id;
+        
+        try {
+            const leaderboardRoles = serverConfig.leaderboard_roles || {};
+            const assignmentStrategy = leaderboardRoles.assignment_strategy || {};
+            
+            // Get current strategy and cycle through: server-local → global-filtered → global → server-local
+            const currentStrategy = assignmentStrategy[leaderboardType] || 'server-local';
+            let newStrategy;
+            switch (currentStrategy) {
+                case 'server-local':
+                    newStrategy = 'global-filtered';
+                    break;
+                case 'global-filtered':
+                    newStrategy = 'global';
+                    break;
+                case 'global':
+                    newStrategy = 'server-local';
+                    break;
+                default:
+                    newStrategy = 'global-filtered';
+            }
+            
+            // Update the strategy
+            const updatedStrategy = {
+                ...assignmentStrategy,
+                [leaderboardType]: newStrategy
+            };
+            
+            const updatedLeaderboardRoles = {
+                ...leaderboardRoles,
+                assignment_strategy: updatedStrategy
+            };
+            
+            // Save to database
+            await this.updateServerConfig(serverId, {
+                leaderboard_roles: updatedLeaderboardRoles
+            });
+            
+            // Log the configuration update
+            console.log(`⚙️ Toggled ${leaderboardType} leaderboard strategy from ${currentStrategy} to ${newStrategy}`);
+            
+            // Apply roles immediately with new strategy
+            try {
+                await DatabaseUtils.assignLeaderboardRoles(serverId, interaction.guild);
+                console.log(`✅ Applied leaderboard roles with new ${leaderboardType} strategy: ${newStrategy}`);
+            } catch (roleError) {
+                console.error('Error applying leaderboard roles after strategy change:', roleError);
+            }
+            
+            // Show success message briefly, then return to config
+            const getStrategyEmoji = (strategy) => {
+                switch (strategy) {
+                    case 'global': return '🌍';
+                    case 'global-filtered': return '🌐';
+                    default: return '🏠';
+                }
+            };
+            
+            const getStrategyName = (strategy) => {
+                switch (strategy) {
+                    case 'global': return 'Global';
+                    case 'global-filtered': return 'Global (Server-Filtered)';
+                    default: return 'Server-Local';
+                }
+            };
+            
+            const strategyEmoji = getStrategyEmoji(newStrategy);
+            const strategyName = getStrategyName(newStrategy);
+            
+            const embed = new EmbedBuilder()
+                .setColor('#00ff00')
+                .setTitle('✅ Strategy Updated')
+                .setDescription(`**${leaderboardType.charAt(0).toUpperCase() + leaderboardType.slice(1)} leaderboard assignment strategy** updated to:\n\n${strategyEmoji} **${strategyName}**\n\n${
+                    newStrategy === 'global' 
+                        ? 'Roles will only be assigned to users who are actually in the top global positions.' 
+                        : newStrategy === 'global-filtered'
+                        ? 'Roles will be assigned using the global leaderboard, but only to users who are present in this server.'
+                        : 'Roles will be assigned to the highest-ranking users who are present in this server.'
+                }\n\nReturning to configuration...`)
+                .setTimestamp();
+            
+            await this.updateInteraction(interaction, { embeds: [embed], components: [] });
+            
+            // After a short delay, show the config menu again
+            setTimeout(async () => {
+                try {
+                    const freshServerConfig = await DatabaseUtils.getServerConfig(serverId);
+                    await this.showLeaderboardRolesConfig(interaction, freshServerConfig);
+                } catch (error) {
+                    console.error('Error showing leaderboard config after strategy toggle:', error);
+                }
+            }, 5000);
+            
+        } catch (error) {
+            console.error('Error toggling leaderboard role strategy:', error);
+            await this.updateInteraction(interaction, {
+                content: '❌ Error updating assignment strategy. Please try again.',
+                components: []
+            });
+        }
+    },
+
+    async showEditLeaderboardRoleModal(interaction, position, roleId, leaderboardType) {
+        const modal = new ModalBuilder()
+            .setCustomId('config_edit_leaderboard_role_modal')
+            .setTitle('Edit Leaderboard Role Position');
+
+        const positionInput = new TextInputBuilder()
+            .setCustomId('leaderboard_edit_position_input')
+            .setLabel('New Leaderboard Position')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('Enter new position (1, 2, 3, etc.)')
+            .setMinLength(1)
+            .setMaxLength(2)
+            .setRequired(true);
+
+        const oldPositionInput = new TextInputBuilder()
+            .setCustomId('leaderboard_old_position_input')
+            .setLabel('Current Position (do not edit)')
+            .setStyle(TextInputStyle.Short)
+            .setValue(position)
+            .setRequired(true);
+
+        const roleInput = new TextInputBuilder()
+            .setCustomId('leaderboard_edit_role_input')
+            .setLabel('Role ID (do not edit)')
+            .setStyle(TextInputStyle.Short)
+            .setValue(roleId)
+            .setRequired(true);
+
+        const leaderboardTypeInput = new TextInputBuilder()
+            .setCustomId('leaderboard_edit_type_input')
+            .setLabel('Leaderboard Type (do not edit)')
+            .setStyle(TextInputStyle.Short)
+            .setValue(leaderboardType)
+            .setRequired(true);
+
+        const row1 = new ActionRowBuilder().addComponents(positionInput);
+        const row2 = new ActionRowBuilder().addComponents(oldPositionInput);
+        const row3 = new ActionRowBuilder().addComponents(roleInput);
+        const row4 = new ActionRowBuilder().addComponents(leaderboardTypeInput);
+        modal.addComponents(row1, row2, row3, row4);
+
+        await interaction.showModal(modal);
+    },
+
+    async removeLeaderboardRole(interaction, serverConfig, position, roleId, leaderboardType) {
+        const serverId = interaction.guild.id;
+        
+        try {
+            // Get role name for logging (ensure roleId is a string)
+            const roleIdString = String(roleId);
+            const role = interaction.guild.roles.cache.get(roleIdString);
+            const roleName = role ? role.name : 'Unknown Role';
+            
+            // Remove the role from all users BEFORE removing it from configuration
+            try {
+                const roleIdString = String(roleId);
+                const role = interaction.guild.roles.cache.get(roleIdString);
+                if (role) {
+                    const membersWithRole = role.members;
+                    let removedCount = 0;
+                    for (const [memberId, member] of membersWithRole) {
+                        await member.roles.remove(roleIdString, 'Leaderboard role removed from configuration');
+                        removedCount++;
+                    }
+                    console.log(`🎯 Removed role ${roleName} from ${removedCount} users before removing from config`);
+                }
+            } catch (roleError) {
+                console.error('Error removing role from users before config removal:', roleError);
+                // Continue with config removal even if role removal fails
+            }
+            
+            // Now remove the leaderboard role from configuration
+            const currentLeaderboardRoles = serverConfig.leaderboard_roles || {};
+            const updatedLeaderboardRoles = { ...currentLeaderboardRoles };
+            
+            // Remove from the correct leaderboard type
+            if (leaderboardType === 'negative' && updatedLeaderboardRoles.negative) {
+                delete updatedLeaderboardRoles.negative[position];
+            } else if (leaderboardType === 'positive' && updatedLeaderboardRoles.positive) {
+                delete updatedLeaderboardRoles.positive[position];
+            }
+            
+            await this.updateServerConfig(serverId, { leaderboard_roles: updatedLeaderboardRoles });
+            
+            // Log the configuration change
+            await this.logConfigChange(interaction, 'Leaderboard Roles', 
+                `${position}${this.getPositionSuffix(position)} place → @${roleName}`, 
+                'Leaderboard role removed'
+            );
+            
+            const embed = new EmbedBuilder()
+                .setColor('#00ff00')
+                .setTitle('✅ Leaderboard Role Removed')
+                .setDescription(`Successfully removed leaderboard role configuration:\n\n**${position}${this.getPositionSuffix(position)} place → @${roleName}**`)
+                .setFooter({ text: 'Users who currently have this role will keep it.' });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_leaderboard_roles')
+                        .setLabel('← Back to Leaderboard Roles')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await this.updateInteraction(interaction, { embeds: [embed], components: [row] });
+        } catch (error) {
+            console.error('Error removing leaderboard role:', error);
+            await this.updateInteraction(interaction, {
+                content: '❌ Error removing leaderboard role. Please try again.',
                 components: []
             });
         }

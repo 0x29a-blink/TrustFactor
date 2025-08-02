@@ -1014,6 +1014,199 @@ class DatabaseUtils {
             return 0;
         }
     }
+
+    /**
+     * Assign leaderboard roles to users based on their positions
+     * @param {string} serverId - Discord server ID
+     * @param {Object} guild - Discord guild object
+     * @returns {Promise<Object>} Assignment results
+     */
+    static async assignLeaderboardRoles(serverId, guild) {
+        try {
+            console.log(`🔍 Starting leaderboard role assignment for server ${serverId}`);
+            const serverConfig = await this.getServerConfig(serverId);
+            const leaderboardRoles = serverConfig.leaderboard_roles || {};
+            console.log(`📋 Leaderboard roles config:`, JSON.stringify(leaderboardRoles, null, 2));
+            
+            if (Object.keys(leaderboardRoles).length === 0) {
+                console.log(`❌ No leaderboard roles configured`);
+                return { assigned: 0, removed: 0, errors: [] };
+            }
+
+            // Get assignment strategies (default to 'server-local' for backward compatibility)
+            const assignmentStrategy = leaderboardRoles.assignment_strategy || {};
+            const positiveStrategy = assignmentStrategy.positive || 'server-local';
+            const negativeStrategy = assignmentStrategy.negative || 'server-local';
+            
+            console.log(`⚙️ Assignment strategies - Positive: ${positiveStrategy}, Negative: ${negativeStrategy}`);
+
+            const leaderboard = await this.getLeaderboard(serverId, 100);
+            let positiveLeaderboard = leaderboard.filter(entry => entry.total_score > 0).slice(0, 10);
+            let negativeLeaderboard = leaderboard.filter(entry => entry.total_score < 0)
+                .sort((a, b) => a.total_score - b.total_score).slice(0, 10);
+            
+            console.log(`📊 Original Positive leaderboard (top 10):`, positiveLeaderboard.map(e => `${e.user_id}: ${e.total_score}`));
+            console.log(`📊 Original Negative leaderboard (top 10):`, negativeLeaderboard.map(e => `${e.user_id}: ${e.total_score}`));
+
+            // Filter leaderboards based on assignment strategy
+            if (positiveStrategy === 'server-local' || positiveStrategy === 'global-filtered') {
+                const originalCount = positiveLeaderboard.length;
+                positiveLeaderboard = await this.filterForGuildMembers(positiveLeaderboard, guild);
+                console.log(`${positiveStrategy === 'server-local' ? '🏠' : '🌐'} Positive ${positiveStrategy} filtering: ${originalCount} → ${positiveLeaderboard.length} members`);
+            }
+            
+            if (negativeStrategy === 'server-local' || negativeStrategy === 'global-filtered') {
+                const originalCount = negativeLeaderboard.length;
+                negativeLeaderboard = await this.filterForGuildMembers(negativeLeaderboard, guild);
+                console.log(`${negativeStrategy === 'server-local' ? '🏠' : '🌐'} Negative ${negativeStrategy} filtering: ${originalCount} → ${negativeLeaderboard.length} members`);
+            }
+
+            console.log(`📊 Final Positive leaderboard:`, positiveLeaderboard.map(e => `${e.user_id}: ${e.total_score}`));
+            console.log(`📊 Final Negative leaderboard:`, negativeLeaderboard.map(e => `${e.user_id}: ${e.total_score}`));
+
+            const results = { assigned: 0, removed: 0, errors: [] };
+
+            // Process positive leaderboard roles
+            const positiveRoles = leaderboardRoles.positive || {};
+            console.log(`🏆 Processing positive roles:`, positiveRoles);
+            
+            const positiveAssignments = await this.processLeaderboardRoles(
+                positiveLeaderboard, positiveRoles, guild, 'positive', positiveStrategy
+            );
+            results.assigned += positiveAssignments.assigned;
+            results.errors.push(...positiveAssignments.errors);
+
+            // Process negative leaderboard roles
+            const negativeRoles = leaderboardRoles.negative || {};
+            console.log(`💀 Processing negative roles:`, negativeRoles);
+            
+            const negativeAssignments = await this.processLeaderboardRoles(
+                negativeLeaderboard, negativeRoles, guild, 'negative', negativeStrategy
+            );
+            results.assigned += negativeAssignments.assigned;
+            results.errors.push(...negativeAssignments.errors);
+
+            // Remove roles from users who are no longer in the top positions
+            const allPositiveRoles = Object.values(positiveRoles);
+            const allNegativeRoles = Object.values(negativeRoles);
+            const allConfiguredRoles = [...allPositiveRoles, ...allNegativeRoles];
+            
+            const allLeaderboardUsers = [...positiveLeaderboard, ...negativeLeaderboard];
+            const usersInTopPositions = new Set(allLeaderboardUsers.map(entry => String(entry.user_id)));
+
+            for (const roleId of allConfiguredRoles) {
+                try {
+                    const roleIdString = String(roleId);
+                    const role = guild.roles.cache.get(roleIdString);
+                    if (role) {
+                        const membersWithRole = role.members;
+                        
+                        for (const [memberId, member] of membersWithRole) {
+                            const memberIdString = String(memberId);
+                            if (!usersInTopPositions.has(memberIdString)) {
+                                await member.roles.remove(roleIdString, 'No longer in leaderboard position');
+                                results.removed++;
+                                console.log(`🗑️ Removed role ${role.name} from ${member.user.tag} (no longer in top positions)`);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Error removing role ${roleId}:`, error);
+                    results.errors.push(`Failed to remove role ${roleId}: ${error.message}`);
+                }
+            }
+            
+            console.log(`🎯 Final results: ${results.assigned} assigned, ${results.removed} removed, ${results.errors.length} errors`);
+            return results;
+        } catch (error) {
+            console.error('Error assigning leaderboard roles:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Filter leaderboard entries to only include users who are members of the guild
+     * @param {Array} leaderboard - Array of leaderboard entries
+     * @param {Object} guild - Discord guild object
+     * @returns {Promise<Array>} Filtered leaderboard with only guild members
+     */
+    static async filterForGuildMembers(leaderboard, guild) {
+        const filteredLeaderboard = [];
+        
+        for (const entry of leaderboard) {
+            try {
+                const userIdString = String(entry.user_id);
+                await guild.members.fetch(userIdString);
+                filteredLeaderboard.push(entry);
+                console.log(`✅ User ${entry.user_id} is in guild - keeping in leaderboard`);
+            } catch (error) {
+                console.log(`❌ User ${entry.user_id} not in guild - removing from leaderboard`);
+            }
+        }
+        
+        return filteredLeaderboard;
+    }
+
+    /**
+     * Process role assignments for a specific leaderboard type
+     * @param {Array} leaderboard - Filtered leaderboard entries
+     * @param {Object} roles - Role configuration for this leaderboard type
+     * @param {Object} guild - Discord guild object
+     * @param {string} type - 'positive' or 'negative'
+     * @param {string} strategy - 'global' or 'server-local'
+     * @returns {Promise<Object>} Assignment results
+     */
+    static async processLeaderboardRoles(leaderboard, roles, guild, type, strategy) {
+        const results = { assigned: 0, errors: [] };
+        
+        for (let i = 0; i < leaderboard.length; i++) {
+            const entry = leaderboard[i];
+            const position = i + 1;
+            const roleId = roles[position];
+            
+            console.log(`👤 ${type} position ${position}: User ${entry.user_id} (${entry.total_score} pts), roleId: ${roleId}, strategy: ${strategy}`);
+            
+            if (roleId) {
+                try {
+                    const userIdString = String(entry.user_id);
+                    let member;
+                    
+                    if (strategy === 'global') {
+                        // For global strategy, try to fetch the user, but skip if not in guild
+                        try {
+                            member = await guild.members.fetch(userIdString);
+                        } catch (fetchError) {
+                            console.log(`🌍 Global strategy: User ${entry.user_id} not in guild, skipping role assignment`);
+                            continue;
+                        }
+                    } else {
+                        // For server-local and global-filtered strategies, user should already be filtered to be in guild
+                        member = await guild.members.fetch(userIdString);
+                    }
+                    
+                    const roleIdString = String(roleId);
+                    const role = guild.roles.cache.get(roleIdString);
+                    
+                    console.log(`🔍 Member: ${member.user.tag}, Role: ${role ? role.name : 'NOT FOUND'}, Has role: ${member.roles.cache.has(roleIdString)}`);
+                    
+                    if (role && !member.roles.cache.has(roleIdString)) {
+                        await member.roles.add(roleIdString, `${type} leaderboard position ${position} role assignment (${strategy})`);
+                        console.log(`✅ Assigned ${type} role ${role.name} to ${member.user.tag} (position ${position}, ${strategy})`);
+                        results.assigned++;
+                    } else if (!role) {
+                        console.log(`❌ Role ${roleIdString} not found in guild`);
+                    } else {
+                        console.log(`ℹ️ User ${member.user.tag} already has role ${role.name}`);
+                    }
+                } catch (error) {
+                    console.error(`Error assigning ${type} role to user ${entry.user_id}:`, error);
+                    results.errors.push(`Failed to assign ${type} role to user ${entry.user_id}: ${error.message}`);
+                }
+            }
+        }
+        
+        return results;
+    }
 }
 
 module.exports = DatabaseUtils;

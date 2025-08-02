@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS servers (
     daily_point_limit INTEGER DEFAULT NULL CHECK (daily_point_limit IS NULL OR daily_point_limit > 0),
     user_cooldown_minutes INTEGER DEFAULT 60 CHECK (user_cooldown_minutes >= 0),
     auto_role_thresholds JSONB DEFAULT '{}', -- JSON mapping score thresholds to role IDs
+    leaderboard_roles JSONB DEFAULT '{}', -- JSON mapping leaderboard positions to role IDs (supports positive/negative configs and assignment strategies: server-local/global-filtered/global)
     timezone VARCHAR(50) DEFAULT 'UTC',
     is_active BOOLEAN DEFAULT TRUE, -- Soft delete capability
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -378,6 +379,113 @@ COMMENT ON TABLE server_settings_backup IS 'Backup of original server settings b
 COMMENT ON TABLE sync_pending_requests IS 'Pending requests to join sync groups';
 
 -- ================================
+-- SYNC FUNCTIONS
+-- ================================
+
+-- Function to apply priority server settings to all group members
+CREATE OR REPLACE FUNCTION public.apply_priority_settings(
+    group_code TEXT,
+    exclude_server TEXT DEFAULT NULL
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    priority_server_id TEXT;
+    priority_settings JSONB;
+    member_record RECORD;
+BEGIN
+    -- Get the priority server and its settings
+    SELECT s.priority_server
+    INTO priority_server_id
+    FROM sync_groups s
+    WHERE s.sync_code = group_code AND s.is_active = true;
+    
+    IF priority_server_id IS NULL THEN
+        RAISE EXCEPTION 'Priority server not found for group %', group_code;
+    END IF;
+    
+    -- Build settings object from priority server
+    SELECT jsonb_build_object(
+        'threshold', threshold,
+        'voting_timeout', voting_timeout,
+        'testing_mode', testing_mode,
+        'auto_approval', auto_approval,
+        'daily_point_limit', daily_point_limit,
+        'user_cooldown_minutes', user_cooldown_minutes,
+        'auto_role_thresholds', auto_role_thresholds,
+        'timezone', timezone,
+        'embed_color', embed_color
+    ) INTO priority_settings
+    FROM servers 
+    WHERE server_id = priority_server_id::bigint;
+    
+    -- Apply settings to all group members except the excluded server
+    FOR member_record IN 
+        SELECT sgm.server_id::text as server_id_text
+        FROM sync_group_members sgm
+        WHERE sgm.sync_code = group_code 
+        AND sgm.is_active = true 
+        AND (exclude_server IS NULL OR sgm.server_id::text != exclude_server)
+    LOOP
+        UPDATE servers SET
+            threshold = (priority_settings->>'threshold')::integer,
+            voting_timeout = (priority_settings->>'voting_timeout')::integer,
+            testing_mode = (priority_settings->>'testing_mode')::boolean,
+            auto_approval = (priority_settings->>'auto_approval')::boolean,
+            daily_point_limit = CASE 
+                WHEN priority_settings->>'daily_point_limit' = 'null' THEN NULL 
+                ELSE (priority_settings->>'daily_point_limit')::integer 
+            END,
+            user_cooldown_minutes = (priority_settings->>'user_cooldown_minutes')::integer,
+            auto_role_thresholds = (priority_settings->>'auto_role_thresholds')::jsonb,
+            timezone = priority_settings->>'timezone',
+            embed_color = priority_settings->>'embed_color'
+        WHERE server_id = member_record.server_id_text::bigint;
+    END LOOP;
+END;
+$$;
+
+-- Function to restore original server settings from backup
+CREATE OR REPLACE FUNCTION public.restore_server_settings(target_server_id TEXT)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    backup_settings JSONB;
+BEGIN
+    -- Get the backed up settings
+    SELECT original_settings INTO backup_settings
+    FROM server_settings_backup
+    WHERE server_id = target_server_id::bigint;
+    
+    IF backup_settings IS NULL THEN
+        RAISE NOTICE 'No backup settings found for server %, keeping current settings', target_server_id;
+        RETURN;
+    END IF;
+    
+    -- Restore the original settings
+    UPDATE servers SET
+        threshold = (backup_settings->>'threshold')::integer,
+        voting_timeout = (backup_settings->>'voting_timeout')::integer,
+        testing_mode = (backup_settings->>'testing_mode')::boolean,
+        auto_approval = (backup_settings->>'auto_approval')::boolean,
+        daily_point_limit = CASE 
+            WHEN backup_settings->>'daily_point_limit' = 'null' THEN NULL 
+            ELSE (backup_settings->>'daily_point_limit')::integer 
+        END,
+        user_cooldown_minutes = (backup_settings->>'user_cooldown_minutes')::integer,
+        auto_role_thresholds = (backup_settings->>'auto_role_thresholds')::jsonb,
+        timezone = backup_settings->>'timezone',
+        embed_color = backup_settings->>'embed_color'
+    WHERE server_id = target_server_id::bigint;
+    
+    -- Remove the backup after restoration
+    DELETE FROM server_settings_backup WHERE server_id = target_server_id::bigint;
+END;
+$$;
+
+-- ================================
 -- SCHEMA VERSION TRACKING
 -- ================================
 
@@ -389,5 +497,6 @@ CREATE TABLE IF NOT EXISTS schema_version (
 
 INSERT INTO schema_version (version, description) VALUES 
 (1, 'Initial schema'),
-(2, 'Server sync groups with priority management')
+(2, 'Server sync groups with priority management'),
+(3, 'Sync functions for apply_priority_settings and restore_server_settings')
 ON CONFLICT (version) DO NOTHING;

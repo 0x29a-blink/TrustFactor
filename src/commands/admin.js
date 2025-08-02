@@ -67,7 +67,11 @@ module.exports = {
                 .addStringOption(option =>
                     option.setName('confirm')
                         .setDescription('Type "CONFIRM" to proceed with server-wide reset')
-                        .setRequired(true))),
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('assign-leaderboard-roles')
+                .setDescription('Manually trigger leaderboard role assignment for all users')),
 
     async execute(interaction) {
         const serverId = interaction.guild.id;
@@ -99,6 +103,9 @@ module.exports = {
                     break;
                 case 'reset-leaderboard':
                     await handleLeaderboardReset(interaction, serverId);
+                    break;
+                case 'assign-leaderboard-roles':
+                    await handleAssignLeaderboardRoles(interaction, serverId);
                     break;
             }
         } catch (error) {
@@ -206,6 +213,17 @@ async function handleScoreAdjust(interaction, serverId) {
         interaction.channelId // channel where the admin command was used
     );
 
+    // Assign leaderboard roles if configured
+    try {
+        const guild = interaction.guild;
+        if (guild) {
+            await DatabaseUtils.assignLeaderboardRoles(serverId, guild);
+        }
+    } catch (roleError) {
+        console.error('Error assigning leaderboard roles:', roleError);
+        // Don't fail the admin command if role assignment fails
+    }
+
     // Get updated score (getUserScore returns a number, not an object)
     const newScore = await DatabaseUtils.getUserScore(targetUser.id, serverId);
 
@@ -269,6 +287,17 @@ async function handleScoreSet(interaction, serverId) {
             content: `❌ ${targetUser.displayName} already has ${newScore} points!`,
             flags: MessageFlags.Ephemeral
         });
+    }
+
+    // Assign leaderboard roles if configured
+    try {
+        const guild = interaction.guild;
+        if (guild) {
+            await DatabaseUtils.assignLeaderboardRoles(serverId, guild);
+        }
+    } catch (roleError) {
+        console.error('Error assigning leaderboard roles:', roleError);
+        // Don't fail the admin command if role assignment fails
     }
 
     // Log the admin override and point award
@@ -436,4 +465,74 @@ async function handleLeaderboardReset(interaction, serverId) {
         embeds: [embed],
         flags: MessageFlags.Ephemeral
     });
+}
+
+/**
+ * Handle manual leaderboard role assignment
+ */
+async function handleAssignLeaderboardRoles(interaction, serverId) {
+    try {
+        // Defer reply since this might take a moment
+        await interaction.deferReply({ ephemeral: true });
+
+        // Get server configuration to check if leaderboard roles are configured
+        const serverConfig = await DatabaseUtils.getServerConfig(serverId);
+        const leaderboardRoles = serverConfig.leaderboard_roles || {};
+        
+        if (Object.keys(leaderboardRoles).length === 0) {
+            return await interaction.editReply({
+                content: '❌ No leaderboard roles are configured for this server. Use `/config` → Leaderboard Roles to configure them first.',
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        // Assign leaderboard roles
+        const results = await DatabaseUtils.assignLeaderboardRoles(serverId, interaction.guild);
+
+        // Log the action
+        await AuditLogger.logCustomEvent(interaction.client, serverId, {
+            title: '🥇 Leaderboard Roles Assigned',
+            description: 'Manual leaderboard role assignment triggered',
+            fields: [
+                { name: 'Triggered By', value: `<@${interaction.user.id}>`, inline: true },
+                { name: 'Roles Assigned', value: `${results.assigned} users`, inline: true },
+                { name: 'Roles Removed', value: `${results.removed} users`, inline: true },
+                { name: 'Errors', value: results.errors.length > 0 ? `${results.errors.length} errors` : 'None', inline: true }
+            ],
+            color: '#00ff00'
+        });
+
+        const embed = new EmbedBuilder()
+            .setColor('#00ff00')
+            .setTitle('🥇 Leaderboard Roles Updated')
+            .setDescription('Leaderboard role assignment completed successfully!')
+            .addFields([
+                { name: '✅ Roles Assigned', value: `${results.assigned} users`, inline: true },
+                { name: '🗑️ Roles Removed', value: `${results.removed} users`, inline: true },
+                { name: '❌ Errors', value: results.errors.length > 0 ? `${results.errors.length} errors` : 'None', inline: true }
+            ])
+            .setFooter({ text: 'Manual assignment triggered by admin' })
+            .setTimestamp();
+
+        if (results.errors.length > 0) {
+            embed.addFields([
+                {
+                    name: '⚠️ Error Details',
+                    value: results.errors.slice(0, 5).join('\n') + (results.errors.length > 5 ? '\n...and more' : ''),
+                    inline: false
+                }
+            ]);
+        }
+
+        await interaction.editReply({
+            embeds: [embed],
+            flags: MessageFlags.Ephemeral
+        });
+    } catch (error) {
+        console.error('Error assigning leaderboard roles:', error);
+        await interaction.editReply({
+            content: '❌ There was an error assigning leaderboard roles. Please check the console for details.',
+            flags: MessageFlags.Ephemeral
+        });
+    }
 }

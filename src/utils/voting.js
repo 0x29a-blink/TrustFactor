@@ -414,6 +414,18 @@ class VotingUtils {
                 pendingVote.channel_id // channel where the vote took place
             );
 
+            // Assign leaderboard roles if configured
+            try {
+                const client = interaction ? interaction.client : message.client;
+                const guild = client.guilds.cache.get(pendingVote.server_id);
+                if (guild) {
+                    await DatabaseUtils.assignLeaderboardRoles(pendingVote.server_id, guild);
+                }
+            } catch (roleError) {
+                console.error('Error assigning leaderboard roles:', roleError);
+                // Don't fail the vote if role assignment fails
+            }
+
             // Get updated user score for feedback
             const newScore = await DatabaseUtils.getUserScore(pendingVote.target_user_id, pendingVote.server_id);
             const client = interaction ? interaction.client : message.client;

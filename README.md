@@ -228,4 +228,4 @@ For support and questions:
 
 ---
 
-**TrustFactor Bot** - Building trust through community-driven point systems across Discord servers. 
+**TrustFactor Bot** - Building trust through community-driven point systems across Discord servers. # Test commit

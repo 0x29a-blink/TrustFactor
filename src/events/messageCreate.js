@@ -6,8 +6,7 @@ module.exports = {
     name: 'messageCreate',
     async execute(message) {
         // Log message creation
-        logger.user(`Message created by ${message.author.tag} (${message.author.id})`, 'MESSAGE');
-        logger.verbose(`Message content: ${message.content.substring(0, 100)}${message.content.length > 100 ? '...' : ''}`, 'MESSAGE');
+        logger.verbose(`Message created by ${message.author.tag} (${message.author.id}): ${message.content}`, 'MESSAGE');
         
         // Ignore bot messages
         if (message.author.bot) return;
@@ -37,7 +36,23 @@ module.exports = {
             
             const [, sign, pointsStr, reason] = match;
             const points = parseInt(pointsStr) * (sign === '+' ? 1 : -1);
-            const reasonText = reason?.trim() || 'Message reply award';
+            
+            // Get the original message being replied to
+            const originalMessage = await message.channel.messages.fetch(message.reference.messageId);
+            if (!originalMessage) {
+                logger.warn('Original message not found for reply', 'MESSAGE');
+                return;
+            }
+            
+            // Use provided reason, or original message content, or fallback to default message
+            let reasonText;
+            if (reason && reason.trim()) {
+                reasonText = reason.trim();
+            } else if (originalMessage.content && originalMessage.content.trim()) {
+                reasonText = originalMessage.content;
+            } else {
+                reasonText = "Acquired points via <emoji> reaction";
+            }
             
             // Validate point range
             if (Math.abs(points) > serverConfig.max_points_per_award || 
@@ -45,13 +60,6 @@ module.exports = {
                 logger.vote(`Invalid point amount: ${points} (max: ${serverConfig.max_points_per_award})`, 'MESSAGE');
                 // Add a reaction to indicate invalid point amount
                 await message.react('❌');
-                return;
-            }
-            
-            // Get the original message being replied to
-            const originalMessage = await message.channel.messages.fetch(message.reference.messageId);
-            if (!originalMessage) {
-                logger.warn('Original message not found for reply', 'MESSAGE');
                 return;
             }
             

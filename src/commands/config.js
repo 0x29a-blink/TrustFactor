@@ -902,7 +902,7 @@ module.exports = {
                 await this.showAddAutoRoleModal(interaction);
                 return;
             } else if (interaction.customId === 'config_reactions_add') {
-                await this.showAddReactionModal(interaction);
+                await this.startEmojiAddProcess(interaction);
                 return;
             } else if (interaction.customId.startsWith('config_autorole_edit_select')) {
                 // This will be handled by select menu logic, but we need to check for edit modal
@@ -1157,13 +1157,15 @@ module.exports = {
             
             // Handle reaction-based voting configuration
             else if (interaction.customId === 'config_reactions_add') {
-                await this.showAddReactionModal(interaction);
+                await this.startEmojiAddProcess(interaction);
             } else if (interaction.customId === 'config_reactions_edit') {
                 await this.showEditReactionSelect(interaction, serverConfig);
             } else if (interaction.customId === 'config_reactions_remove') {
                 await this.showRemoveReactionSelect(interaction, serverConfig);
             } else if (interaction.customId === 'config_reactions_defaults') {
                 await this.setupDefaultReactions(interaction, serverConfig);
+            } else if (interaction.customId === 'config_reactions_cancel_add') {
+                await this.handleEmojiAddCancel(interaction);
             } else if (interaction.customId === 'config_reactions_clear') {
                 await this.showClearAllReactionsConfirmation(interaction, serverConfig);
             } else if (interaction.customId === 'config_reactions_confirm_clear') {
@@ -1565,50 +1567,15 @@ module.exports = {
                 );
                 const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
                 await this.showVotingConfig(interaction, updatedConfig);
-            } else if (interaction.customId === 'config_add_reaction_modal') {
-                const emojiValue = interaction.fields.getTextInputValue('reaction_emoji_input').trim();
-                const pointsValue = interaction.fields.getTextInputValue('reaction_points_input').trim();
-                
-                // Validate point value
-                const points = parseInt(pointsValue.replace(/[^-\d]/g, ''));
-                if (isNaN(points) || points === 0 || points < -10 || points > 10) {
-                    await interaction.reply({
-                        content: '❌ Invalid point value. Please enter a number between -10 and 10 (excluding 0).',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                try {
-                    // Add the custom reaction
-                    await DatabaseUtils.addCustomReaction(serverId, emojiValue, points);
-                    
-                    // Log the configuration change
-                    await this.logConfigChange(interaction, 'Reaction Voting', 
-                        'New reaction', 
-                        `${emojiValue} → ${points > 0 ? '+' : ''}${points} points`
-                    );
-                    
-                    // Update the original message directly (no ephemeral confirmation)
-                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                    await this.showReactionConfig(interaction, updatedConfig);
-                    
-                } catch (error) {
-                    logger.errorWithStack('Error adding custom reaction', error, 'MODAL');
-                    await interaction.reply({
-                        content: '❌ Error adding custom reaction. The emoji may already be configured or invalid.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                }
             } else if (interaction.customId === 'config_edit_reaction_modal') {
                 const reactionId = interaction.fields.getTextInputValue('reaction_id_input');
                 const pointsValue = interaction.fields.getTextInputValue('reaction_edit_points_input').trim();
                 
                 // Validate point value
                 const points = parseInt(pointsValue.replace(/[^-\d]/g, ''));
-                if (isNaN(points) || points === 0 || points < -10 || points > 10) {
+                if (isNaN(points) || points === 0) {
                     await interaction.reply({
-                        content: '❌ Invalid point value. Please enter a number between -10 and 10 (excluding 0).',
+                        content: '❌ Invalid point value. Please enter a non-zero number (e.g., 5, -3, 100, -50).',
                         flags: MessageFlags.Ephemeral
                     });
                     return;
@@ -3378,55 +3345,294 @@ module.exports = {
     },
 
     // ================================
-    // REACTION CONFIG MODAL METHODS
+    // CHAT-BASED EMOJI ADDITION SYSTEM
     // ================================
 
-    async showAddReactionModal(interaction) {
+    async startEmojiAddProcess(interaction) {
         try {
-            logger.config(`Showing add reaction modal for ${interaction.user.tag}`, 'MODAL');
+            logger.config(`Starting emoji add process for ${interaction.user.tag}`, 'EMOJI');
             
-            const modal = new ModalBuilder()
-                .setCustomId('config_add_reaction_modal')
-                .setTitle('Add Custom Reaction');
+            const embed = new EmbedBuilder()
+                .setColor('#00ff00')
+                .setTitle('📝 Add Custom Emoji Reaction')
+                .setDescription('**Step 1:** Choose how to provide the emoji you want to configure:\n\n**Option A:** Send the emoji in chat\n**Option B:** React to this message with the emoji\n\n**Supported formats:**\n• Standard emoji: 👍 😄 🔥\n• Custom emoji: :custom_name:\n• Full emoji format: <:name:id>')
+                .addFields([
+                    {
+                        name: '⏱️ Timeout',
+                        value: 'This will timeout in 60 seconds if no emoji is provided',
+                        inline: false
+                    }
+                ])
+                .setFooter({ text: 'Send a message or react to this message with your emoji' });
 
-            const emojiInput = new TextInputBuilder()
-                .setCustomId('reaction_emoji_input')
-                .setLabel('Emoji')
-                .setStyle(TextInputStyle.Short)
-                .setPlaceholder('Enter emoji (e.g., 👍, :custom_emoji:, <:name:id>)')
-                .setMinLength(1)
-                .setMaxLength(100)
-                .setRequired(true);
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_reactions_cancel_add')
+                        .setLabel('❌ Cancel')
+                        .setStyle(ButtonStyle.Secondary)
+                );
 
-            const pointsInput = new TextInputBuilder()
-                .setCustomId('reaction_points_input')
-                .setLabel('Point Value')
-                .setStyle(TextInputStyle.Short)
-                .setPlaceholder('Enter point value (e.g., +5, -2)')
-                .setMinLength(1)
-                .setMaxLength(4)
-                .setRequired(true);
-
-            const row1 = new ActionRowBuilder().addComponents(emojiInput);
-            const row2 = new ActionRowBuilder().addComponents(pointsInput);
-            modal.addComponents(row1, row2);
-
-            await interaction.showModal(modal);
-            logger.config(`Add reaction modal displayed successfully`, 'MODAL');
+            // Update the existing message instead of creating a new one
+            await interaction.update({ embeds: [embed], components: [row] });
+            const response = await interaction.fetchReply();
+            
+            // Set up collectors for both messages and reactions
+            await this.setupEmojiCollectors(interaction, response);
+            
         } catch (error) {
-            logger.errorWithStack('Error showing add reaction modal', error, 'MODAL');
-            // If we can't show the modal, try to send an error message
-            if (!interaction.replied && !interaction.deferred) {
-                await interaction.reply({
-                    content: '❌ There was an error showing the modal. Please try again.',
-                    flags: MessageFlags.Ephemeral
-                });
+            logger.errorWithStack('Error starting emoji add process', error, 'EMOJI');
+            await this.updateInteraction(interaction, {
+                content: '❌ Error starting emoji addition. Please try again.',
+                components: []
+            });
+        }
+    },
+
+    async setupEmojiCollectors(interaction, response) {
+        const userId = interaction.user.id;
+        const channelId = interaction.channel.id;
+        
+        // Message collector for emoji in chat
+        const messageFilter = (msg) => msg.author.id === userId && msg.channel.id === channelId;
+        const messageCollector = interaction.channel.createMessageCollector({ 
+            filter: messageFilter, 
+            time: 60000
+            // Removed max: 1 so collector keeps listening for valid emoji
+        });
+
+        // Reaction collector for reactions on the bot's message
+        const reactionFilter = (reaction, user) => user.id === userId;
+        const reactionCollector = response.createReactionCollector({ 
+            filter: reactionFilter, 
+            time: 60000, 
+            max: 1 
+        });
+
+        messageCollector.on('collect', async (message) => {
+            const emoji = this.extractEmojiFromMessage(message.content);
+            if (emoji) {
+                messageCollector.stop('valid_emoji');
+                reactionCollector.stop('message');
+                await this.processEmojiSelection(interaction, emoji, message);
             } else {
-                await interaction.followUp({
-                    content: '❌ There was an error showing the modal. Please try again.',
-                    flags: MessageFlags.Ephemeral
-                });
+                await message.reply('❌ I couldn\'t find a valid emoji in your message. Please try again with just the emoji.');
+                // Keep collecting, don't stop the collector
             }
+        });
+
+        reactionCollector.on('collect', async (reaction, user) => {
+            messageCollector.stop('reaction');
+            const emoji = this.formatEmojiFromReaction(reaction.emoji);
+            await this.processEmojiSelection(interaction, emoji);
+        });
+
+        messageCollector.on('end', (collected, reason) => {
+            if (reason === 'time' && !reactionCollector.ended) {
+                this.handleEmojiTimeout(interaction);
+            }
+            // If reason is 'valid_emoji' or 'reaction', we already processed successfully
+        });
+
+        reactionCollector.on('end', (collected, reason) => {
+            if (reason === 'time' && !messageCollector.ended) {
+                this.handleEmojiTimeout(interaction);
+            }
+            // If reason is 'message', we already processed successfully
+        });
+    },
+
+    extractEmojiFromMessage(content) {
+        // Extract various emoji formats from message content
+        const trimmed = content.trim();
+        
+        // Custom emoji format: <:name:id> or <a:name:id>
+        const customEmojiMatch = trimmed.match(/^<a?:([^:]+):(\d+)>$/);
+        if (customEmojiMatch) {
+            return trimmed;
+        }
+        
+        // Standard Unicode emoji (single emoji)
+        const emojiRegex = /^\p{Emoji}$/u;
+        if (emojiRegex.test(trimmed)) {
+            return trimmed;
+        }
+        
+        // Shortcode format: :emoji_name:
+        const shortcodeMatch = trimmed.match(/^:([a-zA-Z0-9_]+):$/);
+        if (shortcodeMatch) {
+            return trimmed;
+        }
+        
+        return null;
+    },
+
+    formatEmojiFromReaction(emoji) {
+        if (emoji.id) {
+            // Custom emoji
+            return `<${emoji.animated ? 'a' : ''}:${emoji.name}:${emoji.id}>`;
+        } else {
+            // Unicode emoji
+            return emoji.name;
+        }
+    },
+
+    async processEmojiSelection(interaction, emoji, userMessage = null) {
+        try {
+            // Delete user's message if it exists
+            if (userMessage && userMessage.deletable) {
+                await userMessage.delete().catch(() => {});
+            }
+
+            const pointsEmbed = new EmbedBuilder()
+                .setColor('#ffaa00')
+                .setTitle('🎯 Set Point Value')
+                .setDescription(`**Selected Emoji:** ${emoji}\n\n**Step 2:** Reply with the point value for this emoji`)
+                .addFields([
+                    {
+                        name: '📊 Point Value Rules',
+                        value: '• Any non-zero number\n• Examples: `5`, `-3`, `100`, `-50`',
+                        inline: false
+                    }
+                ])
+                .setFooter({ text: 'Reply with just the number (e.g., "30" or "-15")' });
+
+            const pointsRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_reactions_cancel_add')
+                        .setLabel('❌ Cancel')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+            await interaction.editReply({ embeds: [pointsEmbed], components: [pointsRow] });
+
+            // Set up collector for point value
+            const pointsFilter = (msg) => msg.author.id === interaction.user.id && msg.channel.id === interaction.channel.id;
+            const pointsCollector = interaction.channel.createMessageCollector({ 
+                filter: pointsFilter, 
+                time: 30000
+                // Removed max: 1 so collector keeps listening for valid input
+            });
+
+            pointsCollector.on('collect', async (message) => {
+                const pointsText = message.content.trim().replace(/[^-\d]/g, '');
+                const points = parseInt(pointsText);
+                
+                if (isNaN(points) || points === 0) {
+                    await message.reply('❌ Invalid point value. Please enter a non-zero number (e.g., 5, -3, 100, -50).');
+                    return; // Keep collecting, don't stop the collector
+                }
+
+                // Valid input received - stop the collector
+                pointsCollector.stop('valid_input');
+
+                // Delete the user's points message
+                if (message.deletable) {
+                    await message.delete().catch(() => {});
+                }
+
+                await this.finalizeEmojiAddition(interaction, emoji, points);
+            });
+
+            pointsCollector.on('end', (collected, reason) => {
+                if (reason === 'time') {
+                    this.handleEmojiTimeout(interaction, 'points');
+                }
+                // If reason is 'valid_input', we already processed the emoji successfully
+            });
+
+        } catch (error) {
+            logger.errorWithStack('Error processing emoji selection', error, 'EMOJI');
+            await interaction.editReply({
+                content: '❌ Error processing emoji selection. Please try again.',
+                embeds: [],
+                components: []
+            });
+        }
+    },
+
+    async finalizeEmojiAddition(interaction, emoji, points) {
+        try {
+            const serverId = interaction.guild.id;
+            
+            // Add the custom reaction
+            await DatabaseUtils.setCustomReaction(serverId, emoji, points);
+            
+            // Log the configuration change
+            await this.logConfigChange(interaction, 'Reaction Voting', 
+                'New reaction', 
+                `${emoji} → ${points > 0 ? '+' : ''}${points} points`
+            );
+            
+            const successEmbed = new EmbedBuilder()
+                .setColor('#00ff00')
+                .setTitle('✅ Emoji Added Successfully!')
+                .setDescription(`**${emoji}** will now award **${points > 0 ? '+' : ''}${points} points** when used as a reaction`)
+                .addFields([
+                    {
+                        name: '🎉 All Set!',
+                        value: 'Users can now react to messages with this emoji to award points.',
+                        inline: false
+                    }
+                ])
+                .setFooter({ text: 'Returning to reaction configuration...' });
+
+            const successRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_reactions')
+                        .setLabel('← Back to Reactions')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await interaction.editReply({ embeds: [successEmbed], components: [successRow] });
+            
+        } catch (error) {
+            logger.errorWithStack('Error finalizing emoji addition', error, 'EMOJI');
+            await interaction.editReply({
+                content: '❌ Error adding custom reaction. The emoji may already be configured or invalid.',
+                embeds: [],
+                components: []
+            });
+        }
+    },
+
+    async handleEmojiTimeout(interaction, step = 'emoji') {
+        const timeoutMessage = step === 'emoji' 
+            ? '⏰ Emoji addition timed out. No emoji was provided within 60 seconds.'
+            : '⏰ Point value input timed out. Please try again.';
+            
+        const timeoutRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('config_reactions')
+                    .setLabel('← Back to Reactions')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        await interaction.editReply({
+            content: timeoutMessage,
+            embeds: [],
+            components: [timeoutRow]
+        }).catch(() => {});
+    },
+
+    // Handle cancel button for emoji addition
+    async handleEmojiAddCancel(interaction) {
+        try {
+            const serverId = interaction.guild.id;
+            const serverConfig = await DatabaseUtils.getServerConfig(serverId);
+            
+            // Return to the reaction configuration instead of showing a cancel message
+            await this.showReactionConfig(interaction, serverConfig);
+        } catch (error) {
+            logger.errorWithStack('Error handling emoji add cancel', error, 'EMOJI');
+            await interaction.update({
+                content: '❌ Emoji addition cancelled.',
+                embeds: [],
+                components: []
+            });
         }
     },
 

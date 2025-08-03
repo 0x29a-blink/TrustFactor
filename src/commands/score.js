@@ -212,7 +212,7 @@ async function generateScoreDisplay(interaction, scoreState) {
     const currentScore = await DatabaseUtils.getUserScore(targetUser.id, serverId);
     
     // Get extended user history with message IDs (will be combined if in sync group)
-    const allHistory = await getExtendedUserHistory(targetUser.id, serverId, 50, syncStatus);
+    const allHistory = await DatabaseUtils.getUserHistory(targetUser.id, serverId, 50);
     
     // Filter history based on view mode
     let filteredHistory = [];
@@ -379,111 +379,6 @@ async function generateScoreDisplay(interaction, scoreState) {
         embed,
         components
     };
-}
-
-/**
- * Get extended user history with message IDs from pending votes (combined from sync group if applicable)
- * @param {string} userId - Discord user ID
- * @param {string} serverId - Discord server ID
- * @param {number} limit - Number of history entries to return
- * @param {Object} syncStatus - Sync status object (if server is in sync group)
- * @returns {Promise<Array>} Extended score history entries with message IDs
- */
-async function getExtendedUserHistory(userId, serverId, limit = 50, syncStatus = null) {
-    try {
-        const { supabase } = require('../config/database');
-        
-        let serverIds = [serverId];
-        
-        // If server is in sync group, get history from all servers in the group
-        if (syncStatus) {
-            const { data: groupMembers } = await supabase
-                .from('sync_group_members')
-                .select('server_id::text')
-                .eq('sync_code', syncStatus.sync_code)
-                .eq('is_active', true);
-            
-            if (groupMembers && groupMembers.length > 0) {
-                serverIds = groupMembers.map(m => m.server_id);
-            }
-        }
-        
-        // Get extended history with message IDs from all relevant servers
-        const { data: extendedData, error: extendedError } = await supabase
-            .from('score_history')
-            .select(`
-                point_change,
-                reason,
-                created_at,
-                awarded_by,
-                vote_id,
-                message_id,
-                channel_id,
-                server_id::text
-            `)
-            .eq('user_id', userId)
-            .in('server_id', serverIds)
-            .order('created_at', { ascending: false })
-            .limit(limit);
-        
-        if (extendedError) {
-            console.warn('Error getting extended history, falling back to basic history:', extendedError);
-            // Fallback to basic history from all relevant servers
-            if (syncStatus && serverIds.length > 1) {
-                // Get basic history from all synced servers
-                const allBasicHistory = [];
-                for (const sId of serverIds) {
-                    const serverHistory = await DatabaseUtils.getUserHistory(userId, sId, Math.ceil(limit / serverIds.length));
-                    allBasicHistory.push(...serverHistory);
-                }
-                // Sort by created_at and limit
-                return allBasicHistory
-                    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-                    .slice(0, limit);
-            } else {
-                return await DatabaseUtils.getUserHistory(userId, serverId, limit);
-            }
-        }
-        
-        if (!extendedData || extendedData.length === 0) {
-            console.log('No extended data found, falling back to basic history');
-            // Same fallback as above
-            if (syncStatus && serverIds.length > 1) {
-                const allBasicHistory = [];
-                for (const sId of serverIds) {
-                    const serverHistory = await DatabaseUtils.getUserHistory(userId, sId, Math.ceil(limit / serverIds.length));
-                    allBasicHistory.push(...serverHistory);
-                }
-                return allBasicHistory
-                    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-                    .slice(0, limit);
-            } else {
-                return await DatabaseUtils.getUserHistory(userId, serverId, limit);
-            }
-        }
-        
-        console.log(`Found ${extendedData.length} extended history entries`);
-        
-        // Transform the data to include message IDs
-        const enhancedHistory = extendedData.map(entry => ({
-            point_change: entry.point_change,
-            reason: entry.reason,
-            created_at: entry.created_at,
-            awarded_by: entry.awarded_by,
-            vote_id: entry.vote_id,
-            message_id: entry.message_id,
-            channel_id: entry.channel_id
-        }));
-        
-        console.log(`Returning ${enhancedHistory.length} enhanced history entries`);
-        return enhancedHistory;
-        
-    } catch (error) {
-        console.error('Error getting extended user history:', error);
-        // Fallback to basic history
-        console.log('Falling back to basic history due to error');
-        return await DatabaseUtils.getUserHistory(userId, serverId, limit);
-    }
 }
 
 /**

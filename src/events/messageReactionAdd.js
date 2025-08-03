@@ -48,13 +48,25 @@ module.exports = {
             
             // If not a voting reaction, check if it's a reaction-based voting emoji
             // Don't process reactions on bot messages (to avoid conflicts with voting systems)
+            // EXCEPTION: Allow reactions on config-related bot messages for emoji selection
             if (message.author.bot) {
+                // Check if this is a config message by looking for config-related content
+                const isConfigMessage = message.embeds.length > 0 && 
+                    (message.embeds[0].title?.includes('Add Custom Emoji') || 
+                     message.embeds[0].description?.includes('Step 1:') ||
+                     message.embeds[0].description?.includes('emoji you want to configure'));
+                
+                if (isConfigMessage) {
+                    logger.verbose('Reaction on config message, allowing for emoji selection', 'REACTION');
+                    return; // Let the reaction collectors handle this
+                }
+                
                 logger.verbose('Reaction on bot message, ignoring', 'REACTION');
                 return;
             }
             
             // Get emoji string (handle both Unicode and custom emojis)
-            const emojiString = reaction.emoji.id ? `<:${reaction.emoji.name}:${reaction.emoji.id}>` : reaction.emoji.name;
+            const emojiString = reaction.emoji.id ? `<${reaction.emoji.animated ? 'a' : ''}:${reaction.emoji.name}:${reaction.emoji.id}>` : reaction.emoji.name;
             
             // Check if this emoji is configured for point awards
             const customReaction = await DatabaseUtils.getCustomReaction(message.guild.id, emojiString);
@@ -124,7 +136,7 @@ module.exports = {
                 targetUserId: message.author.id,
                 serverId: message.guild.id,
                 pointChange: customReaction.point_value,
-                reason: `Reaction: ${emojiString}`,
+                reason: `${emojiString} Reaction on: ${message.content}`,
                 votesNeeded: VotingUtils.calculateRequiredVotes(serverConfig, customReaction.point_value),
                 expiresAt: new Date(Date.now() + (serverConfig.voting_timeout * 60 * 1000))
             };

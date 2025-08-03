@@ -142,24 +142,47 @@ class DatabaseUtils {
     }
 
     /**
-     * Get user score history
+     * Get user score history with extended data and sync group support
      * @param {string} userId - Discord user ID
      * @param {string} serverId - Discord server ID
      * @param {number} limit - Number of history entries to return
-     * @returns {Promise<Array>} Score history entries
+     * @returns {Promise<Array>} Score history entries with message IDs and sync group data
      */
     static async getUserHistory(userId, serverId, limit = 10) {
         try {
+            const { getServerSyncStatus } = require('./syncUtils');
+            const syncStatus = await getServerSyncStatus(serverId);
+            
+            let serverIds = [serverId];
+            
+            // If server is in sync group, get history from all servers in the group
+            if (syncStatus) {
+                const { data: groupMembers } = await supabase
+                    .from('sync_group_members')
+                    .select('server_id::text')
+                    .eq('sync_code', syncStatus.sync_code)
+                    .eq('is_active', true);
+                
+                if (groupMembers && groupMembers.length > 0) {
+                    serverIds = groupMembers.map(m => m.server_id);
+                }
+            }
+            
+            // Get extended history with message IDs from all relevant servers
             const { data, error } = await supabase
                 .from('score_history')
                 .select(`
                     point_change,
                     reason,
                     created_at,
-                    awarded_by
+                    awarded_by,
+                    vote_id,
+                    message_id,
+                    channel_id,
+                    server_id::text
                 `)
                 .eq('user_id', userId)
-                .eq('server_id', serverId)
+                .in('server_id', serverIds)
                 .order('created_at', { ascending: false })
                 .limit(limit);
             

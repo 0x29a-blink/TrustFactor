@@ -83,6 +83,15 @@ module.exports = {
                 });
             }
 
+            // Check minimum vote magnitude (absolute value constraint)
+            if (Math.abs(points) < serverConfig.min_vote_magnitude) {
+                logger.vote(`Invalid point amount: ${points} (minimum magnitude: ${serverConfig.min_vote_magnitude})`, 'AWARD');
+                return await interaction.reply({
+                    content: `❌ Point awards must have a minimum magnitude of ${serverConfig.min_vote_magnitude}! (You tried ±${Math.abs(points)})`,
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+
             // Check for admin bypass/testing mode
             const member = interaction.member;
             const testingMode = isTestingMode(member, serverConfig.testing_mode);

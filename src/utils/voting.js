@@ -403,6 +403,10 @@ class VotingUtils {
             }
 
             // Apply score change (only if we successfully claimed the vote)
+            // For reaction-based votes: use message_id (the message being reacted to)
+            // For reply-based votes: use original_message_id (the message being replied to)
+            const tracebackMessageId = pendingVote.original_message_id || pendingVote.message_id;
+            
             await DatabaseUtils.applyScoreChange(
                 pendingVote.target_user_id,
                 pendingVote.server_id,
@@ -410,7 +414,7 @@ class VotingUtils {
                 pendingVote.reason,
                 pendingVote.proposer_id,
                 pendingVote.id, // pending vote ID for traceability
-                pendingVote.message_id, // message ID where the vote took place
+                tracebackMessageId, // Use original message ID for reply-based votes, or message ID for reaction-based votes
                 pendingVote.channel_id // channel where the vote took place
             );
 

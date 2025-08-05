@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS servers (
     formula_multiplier NUMERIC(4,2) DEFAULT 1.0 CHECK (formula_multiplier >= 0),
     max_points_per_award INTEGER DEFAULT 10,
     min_points_per_award INTEGER DEFAULT -10,
+    min_vote_magnitude INTEGER DEFAULT 1 CHECK (min_vote_magnitude > 0), -- Minimum absolute value for votes (excludes reactions)
     embed_color VARCHAR(7) DEFAULT '#5865F2',
     log_channel BIGINT, -- Discord channel ID as BIGINT
     success_feedback BOOLEAN DEFAULT TRUE,
@@ -149,6 +150,17 @@ CREATE TABLE IF NOT EXISTS custom_reactions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (server_id, emoji),
+    FOREIGN KEY (server_id) REFERENCES servers(server_id) ON DELETE CASCADE
+);
+
+-- Blocked channels table (NEW - prevent reaction point awards in specific channels)
+CREATE TABLE IF NOT EXISTS blocked_channels (
+    server_id BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    reason TEXT,
+    blocked_by BIGINT NOT NULL, -- Discord user ID who blocked the channel
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (server_id, channel_id),
     FOREIGN KEY (server_id) REFERENCES servers(server_id) ON DELETE CASCADE
 );
 
@@ -297,6 +309,21 @@ CREATE INDEX IF NOT EXISTS idx_sync_pending_requests_server ON sync_pending_requ
 CREATE INDEX IF NOT EXISTS idx_sync_pending_requests_status ON sync_pending_requests(status, expires_at);
 
 -- ================================
+-- PERFORMANCE: FOREIGN KEY INDEXES
+-- ================================
+-- These indexes improve JOIN performance and address Supabase performance suggestions
+
+-- Foreign key indexes for better JOIN performance
+CREATE INDEX IF NOT EXISTS idx_pending_votes_server_id ON pending_votes(server_id);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_server_id ON rate_limits(server_id);
+CREATE INDEX IF NOT EXISTS idx_score_history_vote_id ON score_history(vote_id);
+CREATE INDEX IF NOT EXISTS idx_sync_pending_requests_sync_code ON sync_pending_requests(sync_code);
+CREATE INDEX IF NOT EXISTS idx_user_achievements_achievement_id ON user_achievements(achievement_id);
+CREATE INDEX IF NOT EXISTS idx_user_achievements_server_id ON user_achievements(server_id);
+CREATE INDEX IF NOT EXISTS idx_user_server_preferences_server_id ON user_server_preferences(server_id);
+CREATE INDEX IF NOT EXISTS idx_blocked_channels_server_id ON blocked_channels(server_id);
+
+-- ================================
 -- CONSTRAINTS AND CHECKS
 -- ================================
 
@@ -311,14 +338,18 @@ ALTER TABLE rate_limits ADD CONSTRAINT chk_positive_action_count CHECK (action_c
 -- TRIGGERS FOR AUTO-UPDATES
 -- ================================
 
--- Function to update timestamps
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
+-- Function to update timestamps (SECURITY: search_path protected)
+CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
 BEGIN
     NEW.updated_at = CURRENT_TIMESTAMP;
     RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$;
 
 -- Apply auto-update triggers
 CREATE TRIGGER update_servers_updated_at BEFORE UPDATE ON servers
@@ -368,6 +399,7 @@ COMMENT ON TABLE votes IS 'Individual votes on proposals';
 COMMENT ON TABLE score_history IS 'Complete history of score changes with metadata';
 COMMENT ON TABLE admin_roles IS 'Server-specific admin roles with granular permissions';
 COMMENT ON TABLE custom_reactions IS 'Server-specific reaction point values';
+COMMENT ON TABLE blocked_channels IS 'Channels where reaction point awards are disabled';
 COMMENT ON TABLE rate_limits IS 'Rate limiting to prevent spam and abuse';
 COMMENT ON TABLE server_stats IS 'Daily server statistics for analytics';
 COMMENT ON TABLE audit_log IS 'Audit trail for admin actions';
@@ -382,13 +414,74 @@ COMMENT ON TABLE sync_pending_requests IS 'Pending requests to join sync groups'
 -- SYNC FUNCTIONS
 -- ================================
 
--- Function to apply priority server settings to all group members
+-- Function to generate unique sync codes (SECURITY: search_path protected)
+CREATE OR REPLACE FUNCTION public.generate_sync_code()
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+    sync_code TEXT;
+    code_exists BOOLEAN;
+BEGIN
+    -- Generate random 8-character alphanumeric code
+    LOOP
+        sync_code := upper(substring(md5(random()::text) from 1 for 8));
+        
+        -- Check if code already exists
+        SELECT EXISTS(
+            SELECT 1 FROM public.sync_groups 
+            WHERE sync_code = generate_sync_code.sync_code
+        ) INTO code_exists;
+        
+        -- Exit loop if code is unique
+        EXIT WHEN NOT code_exists;
+    END LOOP;
+    
+    RETURN sync_code;
+END;
+$$;
+
+-- Function to backup server settings (SECURITY: search_path protected)
+CREATE OR REPLACE FUNCTION public.backup_server_settings(target_server_id TEXT)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+    settings_json JSONB;
+BEGIN
+    -- Get current server settings
+    SELECT to_jsonb(s) - 'server_id' - 'created_at' - 'updated_at' - 'sync_group'
+    INTO settings_json
+    FROM public.servers s
+    WHERE s.server_id = target_server_id::bigint;
+    
+    IF settings_json IS NULL THEN
+        RAISE EXCEPTION 'Server % not found', target_server_id;
+    END IF;
+    
+    -- Insert or update backup (upsert)
+    INSERT INTO public.server_settings_backup (server_id, original_settings)
+    VALUES (target_server_id::bigint, settings_json)
+    ON CONFLICT (server_id) 
+    DO UPDATE SET 
+        original_settings = EXCLUDED.original_settings,
+        backed_up_at = CURRENT_TIMESTAMP;
+END;
+$$;
+
+-- Function to apply priority server settings to all group members (SECURITY: search_path protected)
 CREATE OR REPLACE FUNCTION public.apply_priority_settings(
     group_code TEXT,
     exclude_server TEXT DEFAULT NULL
 )
 RETURNS void
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
 AS $$
 DECLARE
     priority_server_id TEXT;
@@ -396,39 +489,35 @@ DECLARE
     member_record RECORD;
 BEGIN
     -- Get the priority server and its settings
-    SELECT s.priority_server
-    INTO priority_server_id
-    FROM sync_groups s
-    WHERE s.sync_code = group_code AND s.is_active = true;
+    SELECT sg.priority_server::text INTO priority_server_id
+    FROM public.sync_groups sg
+    WHERE sg.sync_code = group_code AND sg.is_active = true;
     
     IF priority_server_id IS NULL THEN
-        RAISE EXCEPTION 'Priority server not found for group %', group_code;
+        RAISE NOTICE 'No priority server found for sync group %', group_code;
+        RETURN;
     END IF;
     
-    -- Build settings object from priority server
-    SELECT jsonb_build_object(
-        'threshold', threshold,
-        'voting_timeout', voting_timeout,
-        'testing_mode', testing_mode,
-        'auto_approval', auto_approval,
-        'daily_point_limit', daily_point_limit,
-        'user_cooldown_minutes', user_cooldown_minutes,
-        'auto_role_thresholds', auto_role_thresholds,
-        'timezone', timezone,
-        'embed_color', embed_color
-    ) INTO priority_settings
-    FROM servers 
-    WHERE server_id = priority_server_id::bigint;
+    -- Get priority server settings
+    SELECT to_jsonb(s) - 'server_id' - 'created_at' - 'updated_at' - 'sync_group'
+    INTO priority_settings
+    FROM public.servers s
+    WHERE s.server_id = priority_server_id::bigint;
     
-    -- Apply settings to all group members except the excluded server
+    IF priority_settings IS NULL THEN
+        RAISE NOTICE 'Priority server % settings not found', priority_server_id;
+        RETURN;
+    END IF;
+    
+    -- Apply settings to all group members except excluded server
     FOR member_record IN 
         SELECT sgm.server_id::text as server_id_text
-        FROM sync_group_members sgm
+        FROM public.sync_group_members sgm
         WHERE sgm.sync_code = group_code 
         AND sgm.is_active = true 
         AND (exclude_server IS NULL OR sgm.server_id::text != exclude_server)
     LOOP
-        UPDATE servers SET
+        UPDATE public.servers SET
             threshold = (priority_settings->>'threshold')::integer,
             voting_timeout = (priority_settings->>'voting_timeout')::integer,
             testing_mode = (priority_settings->>'testing_mode')::boolean,
@@ -440,23 +529,34 @@ BEGIN
             user_cooldown_minutes = (priority_settings->>'user_cooldown_minutes')::integer,
             auto_role_thresholds = (priority_settings->>'auto_role_thresholds')::jsonb,
             timezone = priority_settings->>'timezone',
-            embed_color = priority_settings->>'embed_color'
+            embed_color = priority_settings->>'embed_color',
+            min_vote_magnitude = (priority_settings->>'min_vote_magnitude')::integer,
+            max_points_per_award = (priority_settings->>'max_points_per_award')::integer,
+            min_points_per_award = (priority_settings->>'min_points_per_award')::integer,
+            reaction_mode = (priority_settings->>'reaction_mode')::boolean,
+            threshold_mode = priority_settings->>'threshold_mode',
+            formula_base = (priority_settings->>'formula_base')::integer,
+            formula_multiplier = (priority_settings->>'formula_multiplier')::numeric,
+            success_feedback = (priority_settings->>'success_feedback')::boolean,
+            failed_feedback = (priority_settings->>'failed_feedback')::boolean
         WHERE server_id = member_record.server_id_text::bigint;
     END LOOP;
 END;
 $$;
 
--- Function to restore original server settings from backup
+-- Function to restore original server settings from backup (SECURITY: search_path protected)
 CREATE OR REPLACE FUNCTION public.restore_server_settings(target_server_id TEXT)
 RETURNS void
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
 AS $$
 DECLARE
     backup_settings JSONB;
 BEGIN
     -- Get the backed up settings
     SELECT original_settings INTO backup_settings
-    FROM server_settings_backup
+    FROM public.server_settings_backup
     WHERE server_id = target_server_id::bigint;
     
     IF backup_settings IS NULL THEN
@@ -465,7 +565,7 @@ BEGIN
     END IF;
     
     -- Restore the original settings
-    UPDATE servers SET
+    UPDATE public.servers SET
         threshold = (backup_settings->>'threshold')::integer,
         voting_timeout = (backup_settings->>'voting_timeout')::integer,
         testing_mode = (backup_settings->>'testing_mode')::boolean,
@@ -477,11 +577,20 @@ BEGIN
         user_cooldown_minutes = (backup_settings->>'user_cooldown_minutes')::integer,
         auto_role_thresholds = (backup_settings->>'auto_role_thresholds')::jsonb,
         timezone = backup_settings->>'timezone',
-        embed_color = backup_settings->>'embed_color'
+        embed_color = backup_settings->>'embed_color',
+        min_vote_magnitude = COALESCE((backup_settings->>'min_vote_magnitude')::integer, 1),
+        max_points_per_award = COALESCE((backup_settings->>'max_points_per_award')::integer, 10),
+        min_points_per_award = COALESCE((backup_settings->>'min_points_per_award')::integer, -10),
+        reaction_mode = COALESCE((backup_settings->>'reaction_mode')::boolean, false),
+        threshold_mode = COALESCE(backup_settings->>'threshold_mode', 'fixed'),
+        formula_base = COALESCE((backup_settings->>'formula_base')::integer, 1),
+        formula_multiplier = COALESCE((backup_settings->>'formula_multiplier')::numeric, 1.0),
+        success_feedback = COALESCE((backup_settings->>'success_feedback')::boolean, true),
+        failed_feedback = COALESCE((backup_settings->>'failed_feedback')::boolean, false)
     WHERE server_id = target_server_id::bigint;
     
     -- Remove the backup after restoration
-    DELETE FROM server_settings_backup WHERE server_id = target_server_id::bigint;
+    DELETE FROM public.server_settings_backup WHERE server_id = target_server_id::bigint;
 END;
 $$;
 
@@ -495,8 +604,146 @@ CREATE TABLE IF NOT EXISTS schema_version (
     applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ================================
+-- SECURITY: ROW LEVEL SECURITY (RLS)
+-- ================================
+
+-- Helper function to check if the current role is the service role
+CREATE OR REPLACE FUNCTION public.is_service_role() 
+RETURNS BOOLEAN 
+LANGUAGE plpgsql 
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+    -- Check if current role is the service role or postgres superuser
+    RETURN current_user IN ('service_role', 'postgres') 
+        OR current_setting('role', true) IN ('service_role', 'postgres');
+END;
+$$;
+
+-- Enable RLS on all tables
+ALTER TABLE servers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_server_preferences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scores ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pending_votes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE votes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE score_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE admin_roles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE custom_reactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE blocked_channels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rate_limits ENABLE ROW LEVEL SECURITY;
+ALTER TABLE server_stats ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE achievements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_achievements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sync_groups ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sync_group_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE server_settings_backup ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sync_pending_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE schema_version ENABLE ROW LEVEL SECURITY;
+
+-- Create RLS policies for service role access
+CREATE POLICY "Service role full access on servers" ON servers FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on users" ON users FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on user_server_preferences" ON user_server_preferences FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on scores" ON scores FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on pending_votes" ON pending_votes FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on votes" ON votes FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on score_history" ON score_history FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on admin_roles" ON admin_roles FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on custom_reactions" ON custom_reactions FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on blocked_channels" ON blocked_channels FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on rate_limits" ON rate_limits FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on server_stats" ON server_stats FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on audit_log" ON audit_log FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on achievements" ON achievements FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on user_achievements" ON user_achievements FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on sync_groups" ON sync_groups FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on sync_group_members" ON sync_group_members FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on server_settings_backup" ON server_settings_backup FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on sync_pending_requests" ON sync_pending_requests FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service role full access on schema_version" ON schema_version FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- Deny all other access using helper function
+CREATE POLICY "Deny all other access to servers" ON servers FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to users" ON users FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to user_server_preferences" ON user_server_preferences FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to scores" ON scores FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to pending_votes" ON pending_votes FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to votes" ON votes FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to score_history" ON score_history FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to admin_roles" ON admin_roles FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to custom_reactions" ON custom_reactions FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to blocked_channels" ON blocked_channels FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to rate_limits" ON rate_limits FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to server_stats" ON server_stats FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to audit_log" ON audit_log FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to achievements" ON achievements FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to user_achievements" ON user_achievements FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to sync_groups" ON sync_groups FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to sync_group_members" ON sync_group_members FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to server_settings_backup" ON server_settings_backup FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to sync_pending_requests" ON sync_pending_requests FOR ALL USING (public.is_service_role());
+CREATE POLICY "Deny all other access to schema_version" ON schema_version FOR ALL USING (public.is_service_role());
+
+-- ================================
+-- FUNCTION PERMISSIONS
+-- ================================
+
+-- Grant execute permissions to service role
+GRANT EXECUTE ON FUNCTION public.generate_sync_code() TO service_role;
+GRANT EXECUTE ON FUNCTION public.backup_server_settings(TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.apply_priority_settings(TEXT, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.restore_server_settings(TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.update_updated_at_column() TO service_role;
+GRANT EXECUTE ON FUNCTION public.is_service_role() TO service_role;
+
+-- Revoke execute from public for security
+REVOKE EXECUTE ON FUNCTION public.generate_sync_code() FROM public;
+REVOKE EXECUTE ON FUNCTION public.backup_server_settings(TEXT) FROM public;
+REVOKE EXECUTE ON FUNCTION public.apply_priority_settings(TEXT, TEXT) FROM public;
+REVOKE EXECUTE ON FUNCTION public.restore_server_settings(TEXT) FROM public;
+REVOKE EXECUTE ON FUNCTION public.update_updated_at_column() FROM public;
+REVOKE EXECUTE ON FUNCTION public.is_service_role() FROM public;
+
+-- ================================
+-- SCHEMA VERSION TRACKING
+-- ================================
+
 INSERT INTO schema_version (version, description) VALUES 
 (1, 'Initial schema'),
 (2, 'Server sync groups with priority management'),
-(3, 'Sync functions for apply_priority_settings and restore_server_settings')
-ON CONFLICT (version) DO NOTHING;
+(3, 'Sync functions for apply_priority_settings and restore_server_settings'),
+(4, 'Function security fix: search_path protection and missing function implementations'),
+(5, 'Row Level Security (RLS) implementation for all tables'),
+(6, 'Complete security implementation with RLS and function protection'),
+(7, 'Performance optimization: foreign key indexes for improved JOIN performance'),
+(8, 'Blocked channels feature: prevent reaction point awards in specific channels')
+ON CONFLICT (version) DO UPDATE SET 
+    description = EXCLUDED.description,
+    applied_at = CURRENT_TIMESTAMP;
+
+-- ================================
+-- SECURITY DOCUMENTATION
+-- ================================
+
+COMMENT ON FUNCTION public.generate_sync_code() IS 'Generates unique 8-character sync codes for server groups. SECURITY: search_path protected.';
+COMMENT ON FUNCTION public.backup_server_settings(TEXT) IS 'Backs up server settings before joining sync group. SECURITY: search_path protected.';
+COMMENT ON FUNCTION public.apply_priority_settings(TEXT, TEXT) IS 'Applies priority server settings to all group members. SECURITY: search_path protected.';
+COMMENT ON FUNCTION public.restore_server_settings(TEXT) IS 'Restores server settings from backup. SECURITY: search_path protected.';
+COMMENT ON FUNCTION public.update_updated_at_column() IS 'Trigger function to update timestamps. SECURITY: search_path protected.';
+COMMENT ON FUNCTION public.is_service_role() IS 'Helper function to identify service role for RLS policies. Only the service role (bot) should access data.';
+
+-- ================================
+-- PERFORMANCE DOCUMENTATION
+-- ================================
+
+COMMENT ON INDEX idx_pending_votes_server_id IS 'PERFORMANCE: Improves JOIN performance between pending_votes and servers tables';
+COMMENT ON INDEX idx_rate_limits_server_id IS 'PERFORMANCE: Improves JOIN performance between rate_limits and servers tables';
+COMMENT ON INDEX idx_score_history_vote_id IS 'PERFORMANCE: Improves JOIN performance between score_history and pending_votes tables';
+COMMENT ON INDEX idx_sync_pending_requests_sync_code IS 'PERFORMANCE: Improves JOIN performance between sync_pending_requests and sync_groups tables';
+COMMENT ON INDEX idx_user_achievements_achievement_id IS 'PERFORMANCE: Improves JOIN performance between user_achievements and achievements tables';
+COMMENT ON INDEX idx_user_achievements_server_id IS 'PERFORMANCE: Improves JOIN performance between user_achievements and servers tables';
+COMMENT ON INDEX idx_user_server_preferences_server_id IS 'PERFORMANCE: Improves JOIN performance between user_server_preferences and servers tables';

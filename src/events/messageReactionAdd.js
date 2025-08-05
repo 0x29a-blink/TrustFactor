@@ -37,6 +37,13 @@ module.exports = {
                 return;
             }
             
+            // Check if this channel is blocked for reaction point awards
+            const blockedChannel = await DatabaseUtils.isChannelBlocked(message.guild.id, message.channel.id);
+            if (blockedChannel) {
+                logger.verbose(`Channel ${message.channel.id} is blocked for reaction point awards, ignoring reaction`, 'REACTION');
+                return;
+            }
+            
             // First, check if this is a reply-based voting reaction (👍/👎 on reply messages)
             const isVotingReaction = reaction.emoji.name === '👍' || reaction.emoji.name === '👎';
             if (isVotingReaction) {
@@ -66,12 +73,24 @@ module.exports = {
             }
             
             // Get emoji string (handle both Unicode and custom emojis)
-            const emojiString = reaction.emoji.id ? `<${reaction.emoji.animated ? 'a' : ''}:${reaction.emoji.name}:${reaction.emoji.id}>` : reaction.emoji.name;
+            // Use toString() for custom emojis to handle duplicate names properly
+            const emojiString = reaction.emoji.id ? reaction.emoji.toString() : reaction.emoji.name;
+            
+            // Debug logging for custom emoji reactions
+            if (reaction.emoji.id) {
+                logger.verbose(`Custom emoji reaction: ${emojiString} (ID: ${reaction.emoji.id}, Name: ${reaction.emoji.name})`, 'REACTION');
+            }
+            
+            // Only process custom emoji reactions for point awards (not Unicode emojis)
+            if (!reaction.emoji.id) {
+                logger.verbose(`Unicode emoji reaction ignored: ${emojiString}`, 'REACTION');
+                return;
+            }
             
             // Check if this emoji is configured for point awards
             const customReaction = await DatabaseUtils.getCustomReaction(message.guild.id, emojiString);
             if (!customReaction) {
-                logger.verbose(`Emoji ${emojiString} not configured for point awards`, 'REACTION');
+                logger.verbose(`Custom emoji ${emojiString} not configured for point awards`, 'REACTION');
                 // Not a configured reaction emoji
                 return;
             }
@@ -136,7 +155,9 @@ module.exports = {
                 targetUserId: message.author.id,
                 serverId: message.guild.id,
                 pointChange: customReaction.point_value,
-                reason: `${emojiString} Reaction on: ${message.content}`,
+                reason: message.content && message.content.trim() 
+                    ? `${emojiString} Reaction on: ${message.content}`
+                    : `${emojiString} Reaction on image`,
                 votesNeeded: VotingUtils.calculateRequiredVotes(serverConfig, customReaction.point_value),
                 expiresAt: new Date(Date.now() + (serverConfig.voting_timeout * 60 * 1000))
             };

@@ -8,7 +8,19 @@
     "dev": "nodemon src/index.js",
     "test": "jest",
     "migrate": "node src/migrations/migrate.js",
-    "deploy-commands": "node src/utils/deploy-commands.js"
+    "deploy-commands": "node src/utils/deploy-commands.js",
+    "security:apply": "node src/migrations/apply_rls.js",
+    "security:verify": "node src/migrations/verify_rls.js",
+    "security:fix": "npm run security:apply && npm run security:verify",
+    "security:functions": "node src/migrations/apply_function_security.js",
+    "security:functions-verify": "node src/migrations/verify_function_security.js",
+    "security:schema-verify": "node src/migrations/verify_schema_security.js",
+    "security:full": "npm run security:apply && npm run security:functions && npm run security:verify && npm run security:functions-verify",
+    "performance:apply": "node src/migrations/apply_performance_optimization.js",
+    "performance:verify": "node src/migrations/verify_performance_optimization.js",
+    "performance:schema-verify": "node src/migrations/verify_schema_performance.js",
+    "performance:optimize": "npm run performance:apply && npm run performance:verify",
+    "database:verify-all": "npm run security:schema-verify && npm run performance:schema-verify"
   },
   "keywords": [
     "discord",

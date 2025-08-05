@@ -67,6 +67,7 @@ class DatabaseUtils {
                         formula_multiplier: 1,
                         max_points_per_award: 10,
                         min_points_per_award: -10,
+                        min_vote_magnitude: 1,
                         embed_color: '#5865F2',
                         success_feedback: true,
                         failed_feedback: false,
@@ -177,8 +178,8 @@ class DatabaseUtils {
                     created_at,
                     awarded_by,
                     vote_id,
-                    message_id,
-                    channel_id,
+                    message_id::text,
+                    channel_id::text,
                     server_id::text
                 `)
                 .eq('user_id', userId)
@@ -1229,6 +1230,124 @@ class DatabaseUtils {
         }
         
         return results;
+    }
+
+    // BLOCKED CHANNELS METHODS
+    /**
+     * Get all blocked channels for a server
+     * @param {string} serverId - Discord server ID
+     * @returns {Promise<Array>} Array of blocked channel objects
+     */
+    static async getBlockedChannels(serverId) {
+        try {
+            const { data, error } = await supabase
+                .from('blocked_channels')
+                .select('server_id::text, channel_id::text, reason, blocked_by::text, created_at')
+                .eq('server_id', String(serverId))
+                .order('created_at', { ascending: false });
+            
+            if (error) throw error;
+            return data || [];
+        } catch (error) {
+            console.error('Error getting blocked channels:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Check if a channel is blocked for reaction point awards
+     * @param {string} serverId - Discord server ID
+     * @param {string} channelId - Discord channel ID
+     * @returns {Promise<Object|null>} Blocked channel object or null
+     */
+    static async isChannelBlocked(serverId, channelId) {
+        try {
+            const { data, error } = await supabase
+                .from('blocked_channels')
+                .select('server_id::text, channel_id::text, reason, blocked_by::text, created_at')
+                .eq('server_id', String(serverId))
+                .eq('channel_id', String(channelId))
+                .single();
+            
+            if (error && error.code !== 'PGRST116') throw error;
+            return data || null;
+        } catch (error) {
+            console.error('Error checking if channel is blocked:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Add a channel to the blocked list
+     * @param {string} serverId - Discord server ID
+     * @param {string} channelId - Discord channel ID
+     * @param {string} reason - Reason for blocking (optional)
+     * @param {string} blockedBy - Discord user ID who blocked the channel
+     * @returns {Promise<Object>} Created blocked channel object
+     */
+    static async addBlockedChannel(serverId, channelId, reason = null, blockedBy) {
+        try {
+            const { data, error } = await supabase
+                .from('blocked_channels')
+                .insert({
+                    server_id: String(serverId),
+                    channel_id: String(channelId),
+                    reason: reason,
+                    blocked_by: String(blockedBy)
+                })
+                .select()
+                .single();
+            
+            if (error) throw error;
+            return data;
+        } catch (error) {
+            console.error('Error adding blocked channel:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Remove a channel from the blocked list
+     * @param {string} serverId - Discord server ID
+     * @param {string} channelId - Discord channel ID
+     * @returns {Promise<boolean>} True if removed, false if not found
+     */
+    static async removeBlockedChannel(serverId, channelId) {
+        try {
+            const { data, error } = await supabase
+                .from('blocked_channels')
+                .delete()
+                .eq('server_id', String(serverId))
+                .eq('channel_id', String(channelId))
+                .select('server_id::text, channel_id::text');
+            
+            if (error) throw error;
+            return data && data.length > 0;
+        } catch (error) {
+            console.error('Error removing blocked channel:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Clear all blocked channels for a server
+     * @param {string} serverId - Discord server ID
+     * @returns {Promise<boolean>} True if cleared successfully
+     */
+    static async clearBlockedChannels(serverId) {
+        try {
+            const { data, error } = await supabase
+                .from('blocked_channels')
+                .delete()
+                .eq('server_id', String(serverId))
+                .select('server_id::text, channel_id::text');
+            
+            if (error) throw error;
+            return data ? data.length : 0;
+        } catch (error) {
+            console.error('Error clearing blocked channels:', error);
+            return false;
+        }
     }
 }
 

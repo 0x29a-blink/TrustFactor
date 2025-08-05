@@ -103,12 +103,12 @@ module.exports = {
             .addFields([
                 { 
                     name: '🗳️ Voting Settings', 
-                    value: `Mode: ${serverConfig.threshold_mode === 'formula' ? 'Formula-based' : 'Fixed'}${serverConfig.threshold_mode === 'fixed' ? ` (${serverConfig.threshold} votes)` : ` (base: ${serverConfig.formula_base}, mult: ${serverConfig.formula_multiplier}x)`}\nTimeout: ${serverConfig.voting_timeout} minutes`, 
+                    value: `Mode: ${serverConfig.threshold_mode === 'formula' ? 'Formula-based' : 'Fixed'}${serverConfig.threshold_mode === 'fixed' ? ` (${serverConfig.threshold} votes)` : ` (base: ${serverConfig.formula_base}, mult: ${serverConfig.formula_multiplier}x)`}\nTimeout: ${serverConfig.voting_timeout} minutes\nReaction Mode: ${serverConfig.reaction_mode ? '✅' : '❌'}\nAuto-Approval: ${serverConfig.auto_approval !== false ? '✅' : '❌'}`, 
                     inline: true 
                 },
                 { 
                     name: '📊 Point Settings', 
-                    value: `Range: ${serverConfig.min_points_per_award} to ${serverConfig.max_points_per_award}\nDaily Limit: ${serverConfig.daily_point_limit || 'None'}\nCooldown: ${serverConfig.user_cooldown_minutes} min`, 
+                    value: `Range: ${serverConfig.min_points_per_award} to ${serverConfig.max_points_per_award}\nMin Vote Size: ±${serverConfig.min_vote_magnitude || 1}\nDaily Limit: ${serverConfig.daily_point_limit || 'None'}\nCooldown: ${serverConfig.user_cooldown_minutes} min`, 
                     inline: true 
                 },
                 { 
@@ -123,7 +123,7 @@ module.exports = {
                 },
                 { 
                     name: '🤖 Advanced', 
-                    value: `Status: ${serverConfig.is_active ? '✅ Active' : '❌ Inactive'}\nLog Channel: ${serverConfig.log_channel ? 'Set' : 'None'}`, 
+                    value: `Status: ${serverConfig.is_active ? '✅ Active' : '❌ Inactive'}\nLog Channel: ${serverConfig.log_channel ? 'Set' : 'None'}\nSync Group: ${serverConfig.sync_group || 'None'}\nTesting Mode: ${serverConfig.testing_mode ? '✅' : '❌'}`, 
                     inline: true 
                 },
                 { 
@@ -383,13 +383,14 @@ module.exports = {
         const embed = new EmbedBuilder()
             .setColor(serverConfig.embed_color || '#5865F2')
             .setTitle('📊 Points Configuration')
-            .setDescription('Configure point limits and restrictions')
+            .setDescription('Configure point limits, vote restrictions, and cooldowns')
             .addFields([
                 { name: 'Point Range', value: `${serverConfig.min_points_per_award} to ${serverConfig.max_points_per_award}`, inline: true },
+                { name: 'Minimum Vote Size', value: `±${serverConfig.min_vote_magnitude || 1}`, inline: true },
                 { name: 'Daily Limit', value: serverConfig.daily_point_limit ? `${serverConfig.daily_point_limit} points` : 'No limit', inline: true },
-                { name: 'User Cooldown', value: `${serverConfig.user_cooldown_minutes} minutes`, inline: true }
+                { name: 'User Cooldown', value: `${serverConfig.user_cooldown_minutes} minutes`, inline: false }
             ])
-            .setFooter({ text: 'Configure point limits and cooldowns' });
+            .setFooter({ text: 'Minimum vote size applies to /award and reply voting (not reactions)' });
 
         const row1 = new ActionRowBuilder()
             .addComponents(
@@ -408,6 +409,21 @@ module.exports = {
         const row2 = new ActionRowBuilder()
             .addComponents(
                 new StringSelectMenuBuilder()
+                    .setCustomId('config_min_vote_magnitude_select')
+                    .setPlaceholder('Set minimum vote size...')
+                    .addOptions([
+                        { label: '±1 (allow any)', value: '1', description: 'Allow +1/-1 votes (no restriction)' },
+                        { label: '±2 minimum', value: '2', description: 'Require at least ±2 points' },
+                        { label: '±3 minimum', value: '3', description: 'Require at least ±3 points' },
+                        { label: '±5 minimum', value: '5', description: 'Require at least ±5 points' },
+                        { label: '±10 minimum', value: '10', description: 'Require at least ±10 points' },
+                        { label: 'Custom...', value: 'custom', description: 'Enter custom minimum vote size' }
+                    ])
+            );
+
+        const row3 = new ActionRowBuilder()
+            .addComponents(
+                new StringSelectMenuBuilder()
                     .setCustomId('config_daily_limit_select')
                     .setPlaceholder('Set daily point limit...')
                     .addOptions([
@@ -419,7 +435,7 @@ module.exports = {
                     ])
             );
 
-        const row3 = new ActionRowBuilder()
+        const row4 = new ActionRowBuilder()
             .addComponents(
                 new StringSelectMenuBuilder()
                     .setCustomId('config_cooldown_select')
@@ -434,7 +450,7 @@ module.exports = {
                     ])
             );
 
-        const row4 = new ActionRowBuilder()
+        const row5 = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
                     .setCustomId('config_points_next')
@@ -446,7 +462,7 @@ module.exports = {
                     .setStyle(ButtonStyle.Primary)
             );
 
-        await this.updateInteraction(interaction, { embeds: [embed], components: [row1, row2, row3, row4] });
+        await this.updateInteraction(interaction, { embeds: [embed], components: [row1, row2, row3, row4, row5] });
     },
 
     async showFeedbackConfig(interaction, serverConfig) {
@@ -758,6 +774,30 @@ module.exports = {
         await interaction.showModal(modal);
     },
 
+    async showCustomMinVoteMagnitudeModal(interaction) {
+        // Get server config to show the current max points limit in placeholder
+        const serverId = interaction.guild.id;
+        const serverConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        const modal = new ModalBuilder()
+            .setCustomId('config_custom_min_vote_magnitude_modal')
+            .setTitle('Set Custom Minimum Vote Size');
+
+        const magnitudeInput = new TextInputBuilder()
+            .setCustomId('min_vote_magnitude_input')
+            .setLabel('Minimum Vote Magnitude (±)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder(`Enter minimum (1-${serverConfig.max_points_per_award})`)
+            .setMinLength(1)
+            .setMaxLength(3)
+            .setRequired(true);
+
+        const actionRow = new ActionRowBuilder().addComponents(magnitudeInput);
+        modal.addComponents(actionRow);
+
+        await interaction.showModal(modal);
+    },
+
     async showCustomLogChannelModal(interaction) {
         const modal = new ModalBuilder()
             .setCustomId('config_custom_log_channel_modal')
@@ -859,6 +899,26 @@ module.exports = {
         logger.config(`Config interaction: ${interaction.customId} by ${interaction.user.tag}`, 'INTERACTION');
         logger.verbose(`Interaction type: ${interaction.type}, values: ${JSON.stringify(interaction.values)}`, 'INTERACTION');
         
+        // Check if user has permission to manage guild (required for config access)
+        if (!interaction.member.permissions.has('ManageGuild')) {
+            await interaction.reply({
+                content: '❌ You need "Manage Server" permission to access the configuration menu.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Check if this interaction is from the original user who executed the command
+        // We'll check if the message has an interaction and compare user IDs
+        const message = interaction.message;
+        if (message && message.interaction && message.interaction.user.id !== interaction.user.id) {
+            await interaction.reply({
+                content: '❌ Only the user who ran the `/config` command can use these controls.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
         const serverId = interaction.guild.id;
         const serverConfig = await DatabaseUtils.getServerConfig(serverId);
         
@@ -883,6 +943,9 @@ module.exports = {
             } else if (interaction.customId === 'config_daily_limit_select') {
                 await this.showCustomDailyLimitModal(interaction);
                 return;
+            } else if (interaction.customId === 'config_min_vote_magnitude_select') {
+                await this.showCustomMinVoteMagnitudeModal(interaction);
+                return;
             } else if (interaction.customId === 'config_log_channel_select') {
                 await this.showCustomLogChannelModal(interaction);
                 return;
@@ -903,6 +966,15 @@ module.exports = {
                 return;
             } else if (interaction.customId === 'config_reactions_add') {
                 await this.startEmojiAddProcess(interaction);
+                return;
+            } else if (interaction.customId === 'config_blocked_channels_add') {
+                await this.startBlockedChannelAddProcess(interaction);
+                return;
+            } else if (interaction.customId === 'config_leaderboard_roles_add_positive') {
+                await this.showAddLeaderboardRoleModal(interaction, 'positive');
+                return;
+            } else if (interaction.customId === 'config_leaderboard_roles_add_negative') {
+                await this.showAddLeaderboardRoleModal(interaction, 'negative');
                 return;
             } else if (interaction.customId.startsWith('config_autorole_edit_select')) {
                 // This will be handled by select menu logic, but we need to check for edit modal
@@ -933,6 +1005,10 @@ module.exports = {
                 const [position, roleId, leaderboardType] = interaction.values[0].split(':');
                 await this.showEditLeaderboardRoleModal(interaction, position, roleId, leaderboardType);
                 return;
+            } else if (interaction.customId === 'config_reaction_edit_select') {
+                const emoji = interaction.values[0];
+                await this.showEditReactionModal(interaction, serverConfig, emoji);
+                return;
             }
         }
         
@@ -940,6 +1016,7 @@ module.exports = {
         await interaction.deferUpdate();
         
         try {
+            
             // Handle main menu navigation
             if (interaction.customId === 'config_voting') {
                 await this.showVotingConfig(interaction, serverConfig);
@@ -981,18 +1058,16 @@ module.exports = {
             // Handle voting config updates
             else if (interaction.customId === 'config_threshold_select') {
                 const value = interaction.values[0];
-                if (value === 'custom') {
-                    await this.showCustomThresholdModal(interaction);
-                } else {
+                // Skip if it's 'custom' since that's handled in early detection
+                if (value !== 'custom') {
                     await this.updateServerConfig(serverId, { threshold: parseInt(value) });
                     const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
                     await this.showVotingConfig(interaction, updatedConfig);
                 }
             } else if (interaction.customId === 'config_timeout_select') {
                 const value = interaction.values[0];
-                if (value === 'custom') {
-                    await this.showCustomTimeoutModal(interaction);
-                } else {
+                // Skip if it's 'custom' since that's handled in early detection
+                if (value !== 'custom') {
                     await this.updateServerConfig(serverId, { voting_timeout: parseInt(value) });
                     const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
                     await this.showVotingConfig(interaction, updatedConfig);
@@ -1011,18 +1086,16 @@ module.exports = {
                 await this.showVotingConfig(interaction, updatedConfig);
             } else if (interaction.customId === 'config_formula_base_select') {
                 const value = interaction.values[0];
-                if (value === 'custom') {
-                    await this.showCustomFormulaBaseModal(interaction);
-                } else {
+                // Skip if it's 'custom' since that's handled in early detection
+                if (value !== 'custom') {
                     await this.updateServerConfig(serverId, { formula_base: parseInt(value) });
                     const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
                     await this.showVotingConfig(interaction, updatedConfig);
                 }
             } else if (interaction.customId === 'config_formula_multiplier_select') {
                 const value = interaction.values[0];
-                if (value === 'custom') {
-                    await this.showCustomFormulaMultiplierModal(interaction);
-                } else {
+                // Skip if it's 'custom' since that's handled in early detection
+                if (value !== 'custom') {
                     await this.updateServerConfig(serverId, { formula_multiplier: parseFloat(value) });
                     const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
                     await this.showVotingConfig(interaction, updatedConfig);
@@ -1064,9 +1137,8 @@ module.exports = {
                 await this.showVotingConfig(interaction, updatedConfig, 2);
             } else if (interaction.customId === 'config_point_range_select') {
                 const value = interaction.values[0];
-                if (value === 'custom') {
-                    await this.showCustomPointRangeModal(interaction);
-                } else {
+                // Skip if it's 'custom' since that's handled in early detection
+                if (value !== 'custom') {
                     const range = parseInt(value);
                     await this.updateServerConfig(serverId, { 
                         min_points_per_award: -range, 
@@ -1075,24 +1147,35 @@ module.exports = {
                     const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
                     await this.showPointsConfig(interaction, updatedConfig);
                 }
-            } else if (interaction.customId === 'config_daily_limit_select') {
+            } else if (interaction.customId === 'config_min_vote_magnitude_select') {
                 const value = interaction.values[0];
-                if (value === 'custom') {
-                    await this.showCustomDailyLimitModal(interaction);
-                } else if (value === 'none') {
-                    await this.updateServerConfig(serverId, { daily_point_limit: null });
-                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                    await this.showPointsConfig(interaction, updatedConfig);
-                } else {
-                    await this.updateServerConfig(serverId, { daily_point_limit: parseInt(value) });
+                // Skip if it's 'custom' since that's handled in early detection
+                if (value !== 'custom') {
+                    const magnitude = parseInt(value);
+                    await this.updateServerConfig(serverId, { 
+                        min_vote_magnitude: magnitude 
+                    });
                     const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
                     await this.showPointsConfig(interaction, updatedConfig);
                 }
+            } else if (interaction.customId === 'config_daily_limit_select') {
+                const value = interaction.values[0];
+                // Skip if it's 'custom' since that's handled in early detection
+                if (value !== 'custom') {
+                    if (value === 'none') {
+                        await this.updateServerConfig(serverId, { daily_point_limit: null });
+                        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                        await this.showPointsConfig(interaction, updatedConfig);
+                    } else {
+                        await this.updateServerConfig(serverId, { daily_point_limit: parseInt(value) });
+                        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                        await this.showPointsConfig(interaction, updatedConfig);
+                    }
+                }
             } else if (interaction.customId === 'config_cooldown_select') {
                 const value = interaction.values[0];
-                if (value === 'custom') {
-                    await this.showCustomCooldownModal(interaction);
-                } else {
+                // Skip if it's 'custom' since that's handled in early detection
+                if (value !== 'custom') {
                     await this.updateServerConfig(serverId, { user_cooldown_minutes: parseInt(value) });
                     const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
                     await this.showPointsConfig(interaction, updatedConfig);
@@ -1130,25 +1213,25 @@ module.exports = {
             // Handle advanced settings updates
             else if (interaction.customId === 'config_log_channel_select') {
                 const value = interaction.values[0];
-                if (value === 'custom') {
-                    await this.showCustomLogChannelModal(interaction);
-                } else if (value === 'none') {
-                    await this.updateServerConfig(serverId, { log_channel: null });
-                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                    await this.showAdvancedConfig(interaction, updatedConfig);
-                } else if (value === 'current') {
-                    await this.updateServerConfig(serverId, { log_channel: interaction.channel.id });
-                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                    await this.showAdvancedConfig(interaction, updatedConfig);
+                // Skip if it's 'custom' since that's handled in early detection
+                if (value !== 'custom') {
+                    if (value === 'none') {
+                        await this.updateServerConfig(serverId, { log_channel: null });
+                        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                        await this.showAdvancedConfig(interaction, updatedConfig);
+                    } else if (value === 'current') {
+                        await this.updateServerConfig(serverId, { log_channel: interaction.channel.id });
+                        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                        await this.showAdvancedConfig(interaction, updatedConfig);
+                    }
                 }
             }
             
             // Handle appearance updates
             else if (interaction.customId === 'config_color_select') {
                 const value = interaction.values[0];
-                if (value === 'custom') {
-                    await this.showCustomColorModal(interaction);
-                } else {
+                // Skip if it's 'custom' since that's handled in early detection
+                if (value !== 'custom') {
                     await this.updateServerConfig(serverId, { embed_color: value });
                     const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
                     await this.showAppearanceConfig(interaction, updatedConfig);
@@ -1163,7 +1246,11 @@ module.exports = {
             } else if (interaction.customId === 'config_reactions_remove') {
                 await this.showRemoveReactionSelect(interaction, serverConfig);
             } else if (interaction.customId === 'config_reactions_defaults') {
+                await this.showDefaultReactionsPreview(interaction, serverConfig);
+            } else if (interaction.customId === 'config_reactions_confirm_defaults') {
                 await this.setupDefaultReactions(interaction, serverConfig);
+            } else if (interaction.customId === 'config_reactions_cancel_defaults') {
+                await this.showReactionConfig(interaction, serverConfig);
             } else if (interaction.customId === 'config_reactions_cancel_add') {
                 await this.handleEmojiAddCancel(interaction);
             } else if (interaction.customId === 'config_reactions_clear') {
@@ -1172,6 +1259,20 @@ module.exports = {
                 await this.clearAllReactions(interaction, serverConfig);
             } else if (interaction.customId === 'config_reactions_cancel_clear') {
                 await this.showReactionConfig(interaction, serverConfig);
+            
+            // Handle blocked channels configuration
+            } else if (interaction.customId === 'config_blocked_channels') {
+                await this.showBlockedChannelsConfig(interaction, serverConfig);
+            } else if (interaction.customId === 'config_blocked_channels_remove') {
+                await this.showRemoveBlockedChannelSelect(interaction, serverConfig);
+            } else if (interaction.customId === 'config_blocked_channels_clear') {
+                await this.showClearAllBlockedChannelsConfirmation(interaction, serverConfig);
+            } else if (interaction.customId === 'config_blocked_channels_clear_confirm') {
+                await this.clearAllBlockedChannels(interaction, serverConfig);
+            } else if (interaction.customId === 'config_blocked_channels_cancel_clear') {
+                await this.showBlockedChannelsConfig(interaction, serverConfig);
+            } else if (interaction.customId === 'config_blocked_channels_cancel_add') {
+                await this.showBlockedChannelsConfig(interaction, serverConfig);
             
             // Handle auto roles configuration (non-modal interactions)
             } else if (interaction.customId === 'config_autoroles_edit') {
@@ -1195,11 +1296,7 @@ module.exports = {
             }
             
             // Handle leaderboard roles configuration (non-modal interactions)
-            else if (interaction.customId === 'config_leaderboard_roles_add_positive') {
-                await this.showAddLeaderboardRoleModal(interaction, 'positive');
-            } else if (interaction.customId === 'config_leaderboard_roles_add_negative') {
-                await this.showAddLeaderboardRoleModal(interaction, 'negative');
-            } else if (interaction.customId === 'config_leaderboard_roles_edit') {
+            else if (interaction.customId === 'config_leaderboard_roles_edit') {
                 await this.showEditLeaderboardRoleSelect(interaction, serverConfig);
             } else if (interaction.customId === 'config_leaderboard_roles_remove') {
                 await this.showRemoveLeaderboardRoleSelect(interaction, serverConfig);
@@ -1225,6 +1322,12 @@ module.exports = {
                 const [position, roleId, leaderboardType] = interaction.values[0].split(':');
                 await this.removeLeaderboardRole(interaction, serverConfig, position, roleId, leaderboardType);
                 return;
+            }
+            
+            // Handle blocked channels select menus (non-modal interactions)
+            else if (interaction.customId === 'config_blocked_channels_remove_select') {
+                const channelId = interaction.values[0];
+                await this.removeBlockedChannel(interaction, serverConfig, channelId);
             }
             
         } catch (error) {
@@ -1370,6 +1473,52 @@ module.exports = {
                 // Update config and show updated menu
                 const limitToSet = dailyLimit === 0 ? null : dailyLimit;
                 await this.updateServerConfig(serverId, { daily_point_limit: limitToSet });
+                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                
+                // Update the original message directly (no ephemeral confirmation)
+                await this.showPointsConfig(interaction, updatedConfig);
+                
+            } else if (interaction.customId === 'config_custom_min_vote_magnitude_modal') {
+                const magnitudeValue = interaction.fields.getTextInputValue('min_vote_magnitude_input');
+                const magnitude = parseInt(magnitudeValue);
+                
+                // Get current server config for validation
+                const currentConfig = await DatabaseUtils.getServerConfig(serverId);
+                
+                // Validate minimum vote magnitude
+                if (isNaN(magnitude) || magnitude < 1) {
+                    await interaction.followUp({
+                        content: '❌ Invalid minimum vote magnitude. Please enter a positive number (minimum 1).',
+                        flags: MessageFlags.Ephemeral
+                    });
+                    return;
+                }
+                
+                // Ensure it doesn't exceed the maximum points per award limit
+                if (magnitude > currentConfig.max_points_per_award) {
+                    await interaction.followUp({
+                        content: `❌ Minimum vote magnitude (${magnitude}) cannot exceed the maximum points per award (${currentConfig.max_points_per_award}). Please enter a value between 1 and ${currentConfig.max_points_per_award}.`,
+                        flags: MessageFlags.Ephemeral
+                    });
+                    return;
+                }
+                
+                // Additional validation: ensure it's reasonable (not exceeding absolute value of min_points_per_award)
+                const maxAllowedMagnitude = Math.max(
+                    currentConfig.max_points_per_award,
+                    Math.abs(currentConfig.min_points_per_award)
+                );
+                
+                if (magnitude > maxAllowedMagnitude) {
+                    await interaction.followUp({
+                        content: `❌ Minimum vote magnitude (${magnitude}) cannot exceed the point range limits (±${maxAllowedMagnitude}). Please enter a value between 1 and ${maxAllowedMagnitude}.`,
+                        flags: MessageFlags.Ephemeral
+                    });
+                    return;
+                }
+                
+                // Update config and show updated menu
+                await this.updateServerConfig(serverId, { min_vote_magnitude: magnitude });
                 const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
                 
                 // Update the original message directly (no ephemeral confirmation)
@@ -1568,13 +1717,13 @@ module.exports = {
                 const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
                 await this.showVotingConfig(interaction, updatedConfig);
             } else if (interaction.customId === 'config_edit_reaction_modal') {
-                const reactionId = interaction.fields.getTextInputValue('reaction_id_input');
+                const emoji = interaction.fields.getTextInputValue('reaction_emoji_input');
                 const pointsValue = interaction.fields.getTextInputValue('reaction_edit_points_input').trim();
                 
                 // Validate point value
                 const points = parseInt(pointsValue.replace(/[^-\d]/g, ''));
                 if (isNaN(points) || points === 0) {
-                    await interaction.reply({
+                    await interaction.followUp({
                         content: '❌ Invalid point value. Please enter a non-zero number (e.g., 5, -3, 100, -50).',
                         flags: MessageFlags.Ephemeral
                     });
@@ -1582,22 +1731,46 @@ module.exports = {
                 }
                 
                 try {
-                    // Update the custom reaction
-                    await DatabaseUtils.updateCustomReaction(reactionId, points);
+                    // Get the current reaction to show the old value in logs
+                    const currentReaction = await DatabaseUtils.getCustomReaction(serverId, emoji);
+                    const oldPoints = currentReaction ? currentReaction.point_value : 0;
+                    
+                    // Update the custom reaction using setCustomReaction (which does upsert)
+                    await DatabaseUtils.setCustomReaction(serverId, emoji, points);
                     
                     // Log the configuration change
                     await this.logConfigChange(interaction, 'Reaction Voting', 
-                        'Reaction updated', 
-                        `New point value: ${points > 0 ? '+' : ''}${points} points`
+                        `${emoji} → ${oldPoints > 0 ? '+' : ''}${oldPoints} points`, 
+                        `${emoji} → ${points > 0 ? '+' : ''}${points} points`
                     );
                     
-                    // Update the original message directly (no ephemeral confirmation)
-                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                    await this.showReactionConfig(interaction, updatedConfig);
+                    // Show success message with updated reaction
+                    const successEmbed = new EmbedBuilder()
+                        .setColor('#00ff00')
+                        .setTitle('✅ Reaction Updated')
+                        .setDescription(`Successfully updated reaction point value:`)
+                        .addFields([
+                            {
+                                name: 'Updated Reaction',
+                                value: `${emoji} → ${points > 0 ? '+' : ''}${points} points`,
+                                inline: false
+                            }
+                        ])
+                        .setFooter({ text: 'Users can now react with this emoji for the new point value.' });
+
+                    const row = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('config_reactions')
+                                .setLabel('← Back to Reactions')
+                                .setStyle(ButtonStyle.Primary)
+                        );
+
+                    await interaction.followUp({ embeds: [successEmbed], components: [row] });
                     
                 } catch (error) {
                     logger.errorWithStack('Error updating custom reaction', error, 'MODAL');
-                    await interaction.reply({
+                    await interaction.followUp({
                         content: '❌ Error updating custom reaction. Please try again.',
                         flags: MessageFlags.Ephemeral
                     });
@@ -1766,7 +1939,7 @@ module.exports = {
             }
         } catch (error) {
             logger.errorWithStack('Error handling modal submit', error, 'MODAL');
-            await interaction.reply({
+            await interaction.followUp({
                 content: '❌ There was an error processing your input. Please try again.',
                 flags: MessageFlags.Ephemeral
             });
@@ -3321,7 +3494,7 @@ module.exports = {
                 .addComponents(
                     new ButtonBuilder()
                         .setCustomId('config_reactions_defaults')
-                        .setLabel('🔄 Setup Defaults')
+                        .setLabel('🔍 Preview Defaults')
                         .setStyle(ButtonStyle.Secondary),
                     new ButtonBuilder()
                         .setCustomId('config_reactions_clear')
@@ -3329,16 +3502,470 @@ module.exports = {
                         .setStyle(ButtonStyle.Danger)
                         .setDisabled(customReactions.length === 0),
                     new ButtonBuilder()
+                        .setCustomId('config_blocked_channels')
+                        .setLabel('🚫 Blocked Channels')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+            const row3 = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
                         .setCustomId('config_main')
                         .setLabel('← Back to Main')
                         .setStyle(ButtonStyle.Primary)
                 );
 
-            await this.updateInteraction(interaction, { embeds: [embed], components: [row1, row2] });
+            await this.updateInteraction(interaction, { embeds: [embed], components: [row1, row2, row3] });
         } catch (error) {
             console.error('Error showing reaction config:', error);
             await this.updateInteraction(interaction, {
                 content: '❌ Error loading reaction configuration. Please try again.',
+                components: []
+            });
+        }
+    },
+
+    // ================================
+    // BLOCKED CHANNELS CONFIGURATION
+    // ================================
+
+    async showBlockedChannelsConfig(interaction, serverConfig) {
+        try {
+            const blockedChannels = await DatabaseUtils.getBlockedChannels(interaction.guild.id);
+            
+            const embed = new EmbedBuilder()
+                .setColor(serverConfig.embed_color || '#5865F2')
+                .setTitle('🚫 Blocked Channels Configuration')
+                .setDescription('Configure channels where reaction point awards are disabled. This is useful for announcement channels or other high-traffic areas where reaction spam could be overwhelming.')
+                .addFields([
+                    {
+                        name: '📋 Current Blocked Channels',
+                        value: blockedChannels.length > 0 
+                            ? blockedChannels.map(bc => {
+                                const channelMention = `<#${bc.channel_id}>`;
+                                const reason = bc.reason ? ` (${bc.reason})` : '';
+                                return `• ${channelMention}${reason}`;
+                            }).join('\n')
+                            : 'No channels are currently blocked',
+                        inline: false
+                    },
+                    {
+                        name: '🎯 How It Works',
+                        value: '• Blocked channels ignore all reaction point awards\n• Users can still react normally, but no points are awarded\n• Useful for announcement channels, spam channels, etc.\n• Only affects reaction-based point awards (not reply-based)',
+                        inline: false
+                    }
+                ])
+                .setFooter({ text: 'Manage blocked channels below' });
+
+            const row1 = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_blocked_channels_add')
+                        .setLabel('➕ Add Channel')
+                        .setStyle(ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId('config_blocked_channels_remove')
+                        .setLabel('🗑️ Remove Channel')
+                        .setStyle(ButtonStyle.Danger)
+                        .setDisabled(blockedChannels.length === 0),
+                    new ButtonBuilder()
+                        .setCustomId('config_blocked_channels_clear')
+                        .setLabel('🧹 Clear All')
+                        .setStyle(ButtonStyle.Danger)
+                        .setDisabled(blockedChannels.length === 0)
+                );
+
+            const row2 = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_reactions')
+                        .setLabel('← Back to Reactions')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await this.updateInteraction(interaction, { embeds: [embed], components: [row1, row2] });
+        } catch (error) {
+            console.error('Error showing blocked channels config:', error);
+            await this.updateInteraction(interaction, {
+                content: '❌ Error loading blocked channels configuration. Please try again.',
+                components: []
+            });
+        }
+    },
+
+    async startBlockedChannelAddProcess(interaction) {
+        try {
+            logger.config(`Starting blocked channel add process for ${interaction.user.tag}`, 'BLOCKED_CHANNELS');
+            
+            const embed = new EmbedBuilder()
+                .setColor('#00ff00')
+                .setTitle('📝 Add Blocked Channel')
+                .setDescription('**Step 1:** Mention the channel you want to block from reaction point awards.\n\n**Example:**\n`#announcements`\n`#general`\n`#spam`\n\n**Or send the channel ID directly:**\n`123456789012345678`')
+                .addFields([
+                    {
+                        name: '⏱️ Timeout',
+                        value: 'This will timeout in 60 seconds if no channel is provided',
+                        inline: false
+                    },
+                    {
+                        name: '💡 Tip',
+                        value: 'You can also provide a reason after the channel mention, like: `#announcements Spam prevention`',
+                        inline: false
+                    }
+                ])
+                .setFooter({ text: 'Send a message with the channel mention or ID' });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_blocked_channels_cancel_add')
+                        .setLabel('❌ Cancel')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+            await interaction.update({ embeds: [embed], components: [row] });
+
+            // Set up message collector for channel input
+            const userId = interaction.user.id;
+            const channelId = interaction.channel.id;
+            
+            const messageFilter = (msg) => msg.author.id === userId && msg.channel.id === channelId;
+            const messageCollector = interaction.channel.createMessageCollector({ 
+                filter: messageFilter, 
+                time: 60000,
+                max: 1 
+            });
+
+            messageCollector.on('collect', async (msg) => {
+                try {
+                    await this.processBlockedChannelSelection(interaction, msg.content, msg);
+                } catch (error) {
+                    logger.errorWithStack('Error processing blocked channel selection', error, 'BLOCKED_CHANNELS');
+                    await interaction.editReply({
+                        content: '❌ Error processing channel selection. Please try again.',
+                        embeds: [],
+                        components: []
+                    });
+                }
+            });
+
+            messageCollector.on('end', async (collected) => {
+                if (collected.size === 0) {
+                    await this.handleBlockedChannelTimeout(interaction);
+                }
+            });
+
+        } catch (error) {
+            logger.errorWithStack('Error starting blocked channel add process', error, 'BLOCKED_CHANNELS');
+            await interaction.editReply({
+                content: '❌ Error starting blocked channel addition. Please try again.',
+                embeds: [],
+                components: []
+            });
+        }
+    },
+
+    async processBlockedChannelSelection(interaction, content, userMessage = null) {
+        try {
+            // Extract channel mention or ID from the message
+            const channelMatch = content.match(/<#(\d+)>|(\d{17,19})/);
+            if (!channelMatch) {
+                await interaction.editReply({
+                    content: '❌ Invalid channel format. Please mention a channel (e.g., `#general`) or provide a channel ID.',
+                    embeds: [],
+                    components: []
+                });
+                return;
+            }
+
+            const channelId = channelMatch[1] || channelMatch[2];
+            const channel = interaction.guild.channels.cache.get(String(channelId));
+            
+            if (!channel) {
+                await interaction.editReply({
+                    content: '❌ Channel not found. Please make sure the channel exists and is accessible.',
+                    embeds: [],
+                    components: []
+                });
+                return;
+            }
+
+            // Check if channel is already blocked
+            const existingBlock = await DatabaseUtils.isChannelBlocked(interaction.guild.id, String(channelId));
+            if (existingBlock) {
+                await interaction.editReply({
+                    content: `❌ Channel ${channel} is already blocked from reaction point awards.`,
+                    embeds: [],
+                    components: []
+                });
+                return;
+            }
+
+            // Extract reason from the message (everything after the channel mention/ID)
+            const reasonMatch = content.match(/(?:<#\d+>|\d{17,19})\s+(.+)/);
+            const reason = reasonMatch ? reasonMatch[1].trim() : null;
+
+            // Add the blocked channel
+            await DatabaseUtils.addBlockedChannel(interaction.guild.id, String(channelId), reason, interaction.user.id);
+            
+            // Log the configuration change
+            await this.logConfigChange(interaction, 'Blocked Channels', 
+                'New blocked channel', 
+                `${channel}${reason ? ` (${reason})` : ''}`
+            );
+            
+            const successEmbed = new EmbedBuilder()
+                .setColor('#00ff00')
+                .setTitle('✅ Channel Blocked Successfully!')
+                .setDescription(`**${channel}** is now blocked from reaction point awards`)
+                .addFields([
+                    {
+                        name: '🎉 All Set!',
+                        value: 'Users can still react normally in this channel, but no points will be awarded.',
+                        inline: false
+                    }
+                ]);
+
+            if (reason) {
+                successEmbed.addFields([
+                    {
+                        name: '📝 Reason',
+                        value: reason,
+                        inline: false
+                    }
+                ]);
+            }
+
+            const successRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_blocked_channels')
+                        .setLabel('← Back to Blocked Channels')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await interaction.editReply({ embeds: [successEmbed], components: [successRow] });
+            
+        } catch (error) {
+            logger.errorWithStack('Error processing blocked channel selection', error, 'BLOCKED_CHANNELS');
+            await interaction.editReply({
+                content: '❌ Error adding blocked channel. Please try again.',
+                embeds: [],
+                components: []
+            });
+        }
+    },
+
+    async handleBlockedChannelTimeout(interaction) {
+        const timeoutMessage = '⏰ Blocked channel addition timed out. No channel was provided within 60 seconds.';
+            
+        // Send ephemeral timeout message
+        await interaction.followUp({
+            content: timeoutMessage,
+            flags: MessageFlags.Ephemeral
+        });
+        
+        // Redirect back to blocked channels config menu
+        try {
+            const serverConfig = await DatabaseUtils.getServerConfig(interaction.guild.id);
+            await this.showBlockedChannelsConfig(interaction, serverConfig);
+        } catch (error) {
+            logger.errorWithStack('Error redirecting to blocked channels config on timeout', error, 'BLOCKED_CHANNELS');
+            const timeoutRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_blocked_channels')
+                        .setLabel('← Back to Blocked Channels')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await interaction.editReply({
+                content: timeoutMessage,
+                embeds: [],
+                components: [timeoutRow]
+            }).catch(() => {});
+        }
+    },
+
+    async showRemoveBlockedChannelSelect(interaction, serverConfig) {
+        try {
+            const blockedChannels = await DatabaseUtils.getBlockedChannels(interaction.guild.id);
+            
+            if (blockedChannels.length === 0) {
+                await interaction.update({
+                    content: '❌ No blocked channels configured to remove.',
+                    embeds: [],
+                    components: []
+                });
+                return;
+            }
+
+            const embed = new EmbedBuilder()
+                .setTitle('🗑️ Remove Blocked Channel')
+                .setDescription('Select a channel to remove from the blocked list:')
+                .setColor('#ff6b6b');
+
+            const options = blockedChannels.map(bc => {
+                const channel = interaction.guild.channels.cache.get(String(bc.channel_id));
+                const channelName = channel ? `#${channel.name}` : `Channel ${bc.channel_id}`;
+                const reason = bc.reason ? ` (${bc.reason})` : '';
+                return {
+                    label: channelName + reason,
+                    value: String(bc.channel_id),
+                    description: `Blocked by ${interaction.guild.members.cache.get(String(bc.blocked_by))?.displayName || 'Unknown'}`
+                };
+            });
+
+            const select = new StringSelectMenuBuilder()
+                .setCustomId('config_blocked_channels_remove_select')
+                .setPlaceholder('Choose a channel to unblock...')
+                .addOptions(options);
+
+            const row = new ActionRowBuilder().addComponents(select);
+
+            await this.updateInteraction(interaction, { embeds: [embed], components: [row] });
+        } catch (error) {
+            logger.errorWithStack('Error showing remove blocked channel select', error, 'BLOCKED_CHANNELS');
+            await this.updateInteraction(interaction, {
+                content: '❌ Error loading blocked channels. Please try again.',
+                embeds: [],
+                components: []
+            });
+        }
+    },
+
+    async removeBlockedChannel(interaction, serverConfig, channelId) {
+        try {
+            const channelMention = `<#${channelId}>`;
+            
+            const removed = await DatabaseUtils.removeBlockedChannel(interaction.guild.id, String(channelId));
+            
+            if (removed) {
+                // Log the configuration change
+                await this.logConfigChange(interaction, 'Blocked Channels', 
+                    `Blocked channel ${channelMention}`, 
+                    'Removed from blocked list'
+                );
+                
+                const successEmbed = new EmbedBuilder()
+                    .setColor('#00ff00')
+                    .setTitle('✅ Channel Unblocked Successfully!')
+                    .setDescription(`**${channelMention}** is no longer blocked from reaction point awards`)
+                    .addFields([
+                        {
+                            name: '🎉 All Set!',
+                            value: 'Users can now receive reaction point awards in this channel.',
+                            inline: false
+                        }
+                    ]);
+
+                const successRow = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('config_blocked_channels')
+                            .setLabel('← Back to Blocked Channels')
+                            .setStyle(ButtonStyle.Primary)
+                    );
+
+                await this.updateInteraction(interaction, { embeds: [successEmbed], components: [successRow] });
+            } else {
+                await this.updateInteraction(interaction, {
+                    content: `❌ Channel ${channelMention} was not found in the blocked list.`,
+                    embeds: [],
+                    components: []
+                });
+            }
+        } catch (error) {
+            logger.errorWithStack('Error removing blocked channel', error, 'BLOCKED_CHANNELS');
+            await this.updateInteraction(interaction, {
+                content: '❌ Error removing blocked channel. Please try again.',
+                embeds: [],
+                components: []
+            });
+        }
+    },
+
+    async showClearAllBlockedChannelsConfirmation(interaction, serverConfig) {
+        try {
+            const blockedChannels = await DatabaseUtils.getBlockedChannels(interaction.guild.id);
+            
+            const embed = new EmbedBuilder()
+                .setColor('#ff6b6b')
+                .setTitle('⚠️ Clear All Blocked Channels')
+                .setDescription('Are you sure you want to remove **ALL** blocked channel configurations?\n\n**This action cannot be undone!**')
+                .addFields([
+                    {
+                        name: '📋 Channels to Unblock',
+                        value: blockedChannels.length > 0 
+                            ? blockedChannels.map(bc => `<#${bc.channel_id}>`).join('\n')
+                            : 'No channels are currently blocked',
+                        inline: false
+                    }
+                ]);
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_blocked_channels_clear_confirm')
+                        .setLabel('✅ Yes, Clear All')
+                        .setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder()
+                        .setCustomId('config_blocked_channels')
+                        .setLabel('❌ Cancel')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+            await this.updateInteraction(interaction, { embeds: [embed], components: [row] });
+        } catch (error) {
+            logger.errorWithStack('Error showing clear all blocked channels confirmation', error, 'BLOCKED_CHANNELS');
+            await this.updateInteraction(interaction, {
+                content: '❌ Error loading blocked channels. Please try again.',
+                embeds: [],
+                components: []
+            });
+        }
+    },
+
+    async clearAllBlockedChannels(interaction, serverConfig) {
+        try {
+            const blockedChannels = await DatabaseUtils.getBlockedChannels(interaction.guild.id);
+            const channelCount = blockedChannels.length;
+            
+            // Clear all blocked channels
+            const cleared = await DatabaseUtils.clearBlockedChannels(interaction.guild.id);
+            
+            // Log the configuration change
+            await this.logConfigChange(interaction, 'Blocked Channels', 
+                `${channelCount} blocked channels`,
+                'All blocked channels cleared'
+            );
+            
+            const successEmbed = new EmbedBuilder()
+                .setColor('#00ff00')
+                .setTitle('✅ All Blocked Channels Cleared!')
+                .setDescription(`Successfully unblocked all ${channelCount} channels.`)
+                .addFields([
+                    {
+                        name: '🎉 All Set!',
+                        value: 'All channels can now receive reaction point awards.',
+                        inline: false
+                    }
+                ]);
+
+            const successRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_blocked_channels')
+                        .setLabel('← Back to Blocked Channels')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await this.updateInteraction(interaction, { embeds: [successEmbed], components: [successRow] });
+        } catch (error) {
+            logger.errorWithStack('Error clearing all blocked channels', error, 'BLOCKED_CHANNELS');
+            await this.updateInteraction(interaction, {
+                content: '❌ Error clearing blocked channels. Please try again.',
+                embeds: [],
                 components: []
             });
         }
@@ -3412,9 +4039,30 @@ module.exports = {
         messageCollector.on('collect', async (message) => {
             const emoji = this.extractEmojiFromMessage(message.content);
             if (emoji) {
-                messageCollector.stop('valid_emoji');
-                reactionCollector.stop('message');
-                await this.processEmojiSelection(interaction, emoji, message);
+                // Validate that this is a custom emoji from this server
+                const validation = await this.validateCustomEmoji(emoji, interaction.guild);
+                if (validation.valid) {
+                    logger.verbose(`Message contains valid custom emoji: ${validation.name} (ID: ${validation.id})`, 'EMOJI');
+                    messageCollector.stop('valid_emoji');
+                    reactionCollector.stop('message');
+                    await this.processEmojiSelection(interaction, emoji, message);
+                } else {
+                    // Send ephemeral error message
+                    await interaction.followUp({
+                        content: `❌ ${validation.error}. Please use a custom emoji from this server.`,
+                        flags: MessageFlags.Ephemeral
+                    });
+                    
+                    // Redirect back to reaction config menu
+                    try {
+                        const serverConfig = await DatabaseUtils.getServerConfig(interaction.guild.id);
+                        await this.showReactionConfig(interaction, serverConfig);
+                    } catch (error) {
+                        logger.errorWithStack('Error redirecting to reaction config from message validation', error, 'EMOJI');
+                        await message.reply(`❌ ${validation.error}. Please use a custom emoji from this server.`);
+                    }
+                    // Keep collecting
+                }
             } else {
                 await message.reply('❌ I couldn\'t find a valid emoji in your message. Please try again with just the emoji.');
                 // Keep collecting, don't stop the collector
@@ -3423,7 +4071,70 @@ module.exports = {
 
         reactionCollector.on('collect', async (reaction, user) => {
             messageCollector.stop('reaction');
+            
+            // Debug logging to understand what emoji we're getting
+            logger.verbose(`Reaction collected: ${JSON.stringify({
+                id: reaction.emoji.id,
+                name: reaction.emoji.name,
+                animated: reaction.emoji.animated,
+                identifier: reaction.emoji.identifier,
+                toString: reaction.emoji.toString(),
+                url: reaction.emoji.url
+            })}`, 'EMOJI');
+            
+            // Validate that we have a custom emoji with an ID
+            if (!reaction.emoji.id) {
+                logger.verbose('Reaction is not a custom emoji (no ID)', 'EMOJI');
+                await interaction.editReply({
+                    content: '❌ Please react with a custom emoji (server emoji), not a standard emoji.',
+                    embeds: [],
+                    components: []
+                });
+                return;
+            }
+
+            // Additional validation: ensure this emoji exists in the server
+            let serverEmoji = interaction.guild.emojis.cache.get(reaction.emoji.id);
+            if (!serverEmoji) {
+                // Try to refresh the emoji cache in case it's a caching issue
+                logger.verbose(`Emoji ${reaction.emoji.id} not found in cache, attempting to refresh...`, 'EMOJI');
+                try {
+                    await interaction.guild.emojis.fetch();
+                    serverEmoji = interaction.guild.emojis.cache.get(reaction.emoji.id);
+                } catch (fetchError) {
+                    logger.errorWithStack('Error fetching guild emojis', fetchError, 'EMOJI');
+                }
+            }
+            
+            if (!serverEmoji) {
+                logger.error(`Reaction emoji ${reaction.emoji.id} not found in server ${interaction.guild.id}`, 'EMOJI');
+                
+                // Send ephemeral error message
+                await interaction.followUp({
+                    content: '❌ This emoji is not from this server. Please use a custom emoji from this server.',
+                    flags: MessageFlags.Ephemeral
+                });
+                
+                // Redirect back to reaction config menu
+                try {
+                    const serverConfig = await DatabaseUtils.getServerConfig(interaction.guild.id);
+                    await this.showReactionConfig(interaction, serverConfig);
+                } catch (error) {
+                    logger.errorWithStack('Error redirecting to reaction config', error, 'EMOJI');
+                    await interaction.editReply({
+                        content: '❌ This emoji is not from this server. Please use a custom emoji from this server.',
+                        embeds: [],
+                        components: []
+                    });
+                }
+                return;
+            }
+
+            logger.verbose(`Reaction emoji verified in server: ${serverEmoji.name} (${serverEmoji.id})`, 'EMOJI');
+            
             const emoji = this.formatEmojiFromReaction(reaction.emoji);
+            logger.verbose(`Formatted emoji string: ${emoji}`, 'EMOJI');
+            
             await this.processEmojiSelection(interaction, emoji);
         });
 
@@ -3469,12 +4180,56 @@ module.exports = {
 
     formatEmojiFromReaction(emoji) {
         if (emoji.id) {
-            // Custom emoji
-            return `<${emoji.animated ? 'a' : ''}:${emoji.name}:${emoji.id}>`;
+            // Custom emoji - ensure we have all required properties
+            if (!emoji.name) {
+                logger.error('Custom emoji missing name property', 'EMOJI');
+                throw new Error('Invalid custom emoji: missing name');
+            }
+            
+            // Use toString() method which handles formatting correctly
+            const formatted = emoji.toString();
+            logger.verbose(`Formatted custom emoji: ${formatted} (ID: ${emoji.id}, Name: ${emoji.name})`, 'EMOJI');
+            return formatted;
         } else {
             // Unicode emoji
+            logger.verbose(`Unicode emoji: ${emoji.name}`, 'EMOJI');
             return emoji.name;
         }
+    },
+
+    async validateCustomEmoji(emojiString, guild) {
+        // Validate that this is a proper custom emoji format
+        const emojiMatch = emojiString.match(/^<a?:([^:]+):(\d+)>$/);
+        if (!emojiMatch) {
+            return { valid: false, error: 'Invalid emoji format' };
+        }
+
+        const [, emojiName, emojiId] = emojiMatch;
+        
+        // Check if the emoji exists in the guild
+        let serverEmoji = guild.emojis.cache.get(emojiId);
+        if (!serverEmoji) {
+            // Try to refresh the emoji cache in case it's a caching issue
+            logger.verbose(`Emoji ${emojiId} not found in cache during validation, attempting to refresh...`, 'EMOJI');
+            try {
+                await guild.emojis.fetch();
+                serverEmoji = guild.emojis.cache.get(emojiId);
+            } catch (fetchError) {
+                logger.errorWithStack('Error fetching guild emojis during validation', fetchError, 'EMOJI');
+            }
+        }
+        
+        if (!serverEmoji) {
+            return { valid: false, error: 'Emoji not found in server' };
+        }
+
+        return { 
+            valid: true, 
+            emoji: serverEmoji,
+            name: emojiName,
+            id: emojiId,
+            formatted: emojiString
+        };
     },
 
     async processEmojiSelection(interaction, emoji, userMessage = null) {
@@ -3483,6 +4238,34 @@ module.exports = {
             if (userMessage && userMessage.deletable) {
                 await userMessage.delete().catch(() => {});
             }
+
+            // Validate that this is a custom emoji from this server
+            const validation = await this.validateCustomEmoji(emoji, interaction.guild);
+            if (!validation.valid) {
+                logger.error(`Emoji validation failed: ${validation.error} for ${emoji}`, 'EMOJI');
+                
+                // Send ephemeral error message
+                await interaction.followUp({
+                    content: `❌ ${validation.error}. Please use a custom emoji from this server.`,
+                    flags: MessageFlags.Ephemeral
+                });
+                
+                // Redirect back to reaction config menu
+                try {
+                    const serverConfig = await DatabaseUtils.getServerConfig(interaction.guild.id);
+                    await this.showReactionConfig(interaction, serverConfig);
+                } catch (error) {
+                    logger.errorWithStack('Error redirecting to reaction config from processEmojiSelection', error, 'EMOJI');
+                    await interaction.editReply({
+                        content: `❌ ${validation.error}. Please use a custom emoji from this server.`,
+                        embeds: [],
+                        components: []
+                    });
+                }
+                return;
+            }
+
+            logger.verbose(`Validated custom emoji: ${validation.name} (ID: ${validation.id})`, 'EMOJI');
 
             const pointsEmbed = new EmbedBuilder()
                 .setColor('#ffaa00')
@@ -3603,19 +4386,32 @@ module.exports = {
             ? '⏰ Emoji addition timed out. No emoji was provided within 60 seconds.'
             : '⏰ Point value input timed out. Please try again.';
             
-        const timeoutRow = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('config_reactions')
-                    .setLabel('← Back to Reactions')
-                    .setStyle(ButtonStyle.Primary)
-            );
-
-        await interaction.editReply({
+        // Send ephemeral timeout message
+        await interaction.followUp({
             content: timeoutMessage,
-            embeds: [],
-            components: [timeoutRow]
-        }).catch(() => {});
+            flags: MessageFlags.Ephemeral
+        });
+        
+        // Redirect back to reaction config menu
+        try {
+            const serverConfig = await DatabaseUtils.getServerConfig(interaction.guild.id);
+            await this.showReactionConfig(interaction, serverConfig);
+        } catch (error) {
+            logger.errorWithStack('Error redirecting to reaction config on timeout', error, 'EMOJI');
+            const timeoutRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_reactions')
+                        .setLabel('← Back to Reactions')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await interaction.editReply({
+                content: timeoutMessage,
+                embeds: [],
+                components: [timeoutRow]
+            }).catch(() => {});
+        }
     },
 
     // Handle cancel button for emoji addition
@@ -3631,6 +4427,47 @@ module.exports = {
             await interaction.update({
                 content: '❌ Emoji addition cancelled.',
                 embeds: [],
+                components: []
+            });
+        }
+    },
+
+    async showEditReactionModal(interaction, serverConfig, emoji) {
+        try {
+            // Get the current reaction to show existing point value
+            const currentReaction = await DatabaseUtils.getCustomReaction(interaction.guild.id, emoji);
+            const currentPoints = currentReaction ? currentReaction.point_value : 0;
+
+            const modal = new ModalBuilder()
+                .setCustomId('config_edit_reaction_modal')
+                .setTitle('Edit Reaction Point Value');
+
+            const emojiInput = new TextInputBuilder()
+                .setCustomId('reaction_emoji_input')
+                .setLabel('Emoji (read-only)')
+                .setStyle(TextInputStyle.Short)
+                .setValue(emoji)
+                .setRequired(false);
+
+            const pointsInput = new TextInputBuilder()
+                .setCustomId('reaction_edit_points_input')
+                .setLabel('Point Value')
+                .setStyle(TextInputStyle.Short)
+                .setPlaceholder('Enter point value (e.g., 5, -3, 100)')
+                .setValue(currentPoints.toString())
+                .setMinLength(1)
+                .setMaxLength(5)
+                .setRequired(true);
+
+            const row1 = new ActionRowBuilder().addComponents(emojiInput);
+            const row2 = new ActionRowBuilder().addComponents(pointsInput);
+            modal.addComponents(row1, row2);
+
+            await interaction.showModal(modal);
+        } catch (error) {
+            console.error('Error showing edit reaction modal:', error);
+            await this.updateInteraction(interaction, {
+                content: '❌ Error showing edit dialog. Please try again.',
                 components: []
             });
         }
@@ -3725,6 +4562,61 @@ module.exports = {
             console.error('Error showing remove reaction select:', error);
             await this.updateInteraction(interaction, {
                 content: '❌ Error loading reactions. Please try again.',
+                components: []
+            });
+        }
+    },
+
+    async showDefaultReactionsPreview(interaction, serverConfig) {
+        try {
+            const defaultReactions = [
+                { emoji: '➕', point_value: 1 },
+                { emoji: '➖', point_value: -1 },
+                { emoji: '😄', point_value: 3 },
+                { emoji: '😐', point_value: -3 },
+                { emoji: '🥶', point_value: -5 },
+                { emoji: '🔥', point_value: 5 }
+            ];
+
+            const embed = new EmbedBuilder()
+                .setColor('#ffaa00')
+                .setTitle('🔍 Preview: Default Emoji Reactions')
+                .setDescription('These emojis and point values will be added to your server:')
+                .addFields([
+                    {
+                        name: '📊 Default Reactions',
+                        value: defaultReactions.map(r => `${r.emoji} → ${r.point_value > 0 ? '+' : ''}${r.point_value} points`).join('\n'),
+                        inline: false
+                    },
+                    {
+                        name: '📝 What happens next?',
+                        value: '• These reactions will be added to your server configuration\n• Users can react with these emojis to award points\n• You can edit or remove them later in the reactions menu',
+                        inline: false
+                    }
+                ])
+                .setFooter({ text: 'Choose an option below to continue' });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_reactions_confirm_defaults')
+                        .setLabel('✅ Add These Reactions')
+                        .setStyle(ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId('config_reactions_cancel_defaults')
+                        .setLabel('❌ Cancel')
+                        .setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder()
+                        .setCustomId('config_reactions')
+                        .setLabel('← Back to Reactions')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await this.updateInteraction(interaction, { embeds: [embed], components: [row] });
+        } catch (error) {
+            console.error('Error showing default reactions preview:', error);
+            await this.updateInteraction(interaction, {
+                content: '❌ Error showing preview. Please try again.',
                 components: []
             });
         }
@@ -3846,6 +4738,55 @@ module.exports = {
             console.error('Error clearing reactions:', error);
             await this.updateInteraction(interaction, {
                 content: '❌ Error clearing reactions. Please try again.',
+                components: []
+            });
+        }
+    },
+
+    async removeReaction(interaction, serverConfig, emoji) {
+        try {
+            const removed = await DatabaseUtils.removeCustomReaction(interaction.guild.id, emoji);
+            
+            if (removed) {
+                // Log the configuration change
+                await this.logConfigChange(interaction, 'Reaction Voting', 
+                    `Custom reaction ${emoji}`, 
+                    'Removed from configuration'
+                );
+                
+                const successEmbed = new EmbedBuilder()
+                    .setColor('#00ff00')
+                    .setTitle('✅ Reaction Removed Successfully!')
+                    .setDescription(`**${emoji}** is no longer configured for reaction point awards`)
+                    .addFields([
+                        {
+                            name: '🎉 All Set!',
+                            value: 'Users can still react with this emoji, but no points will be awarded.',
+                            inline: false
+                        }
+                    ]);
+
+                const successRow = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('config_reactions')
+                            .setLabel('← Back to Reactions')
+                            .setStyle(ButtonStyle.Primary)
+                    );
+
+                await interaction.update({ embeds: [successEmbed], components: [successRow] });
+            } else {
+                await interaction.update({
+                    content: `❌ Reaction ${emoji} was not found in the configuration.`,
+                    embeds: [],
+                    components: []
+                });
+            }
+        } catch (error) {
+            logger.errorWithStack('Error removing reaction', error, 'REACTIONS');
+            await interaction.update({
+                content: '❌ Error removing reaction. Please try again.',
+                embeds: [],
                 components: []
             });
         }

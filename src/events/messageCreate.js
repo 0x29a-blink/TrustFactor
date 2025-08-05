@@ -51,7 +51,7 @@ module.exports = {
             } else if (originalMessage.content && originalMessage.content.trim()) {
                 reasonText = originalMessage.content;
             } else {
-                reasonText = "Acquired points via <emoji> reaction";
+                reasonText = "Reply to image";
             }
             
             // Validate point range
@@ -59,6 +59,14 @@ module.exports = {
                 Math.abs(points) < 1) {
                 logger.vote(`Invalid point amount: ${points} (max: ${serverConfig.max_points_per_award})`, 'MESSAGE');
                 // Add a reaction to indicate invalid point amount
+                await message.react('❌');
+                return;
+            }
+
+            // Check minimum vote magnitude (absolute value constraint) for reply-based voting
+            if (Math.abs(points) < serverConfig.min_vote_magnitude) {
+                logger.vote(`Invalid point amount: ${points} (minimum magnitude: ${serverConfig.min_vote_magnitude})`, 'MESSAGE');
+                // Add a reaction to indicate vote magnitude too small
                 await message.react('❌');
                 return;
             }

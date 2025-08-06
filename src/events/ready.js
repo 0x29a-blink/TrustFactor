@@ -1,5 +1,6 @@
 const { Events } = require('discord.js');
 const { supabase, testConnection } = require('../config/database');
+const { initializeSyncSystem } = require('../utils/syncHandler');
 const logger = require('../utils/logger');
 
 module.exports = {
@@ -22,6 +23,9 @@ module.exports = {
                 return;
             }
             
+            // Initialize sync system
+            await initializeSyncSystem();
+            
             // Load and resume tracking all pending votes
             await loadPendingVotes(client);
             
@@ -33,9 +37,6 @@ module.exports = {
                 await cleanupExpiredVotes();
             }, 5 * 60 * 1000); // 5 minutes
             
-            logger.info(`Serving ${client.guilds.cache.size} servers`, 'STARTUP');
-            logger.db('Supabase connection successful', 'STARTUP');
-            logger.db('Database connection verified', 'STARTUP');
             logger.info('Periodic vote expiration check enabled (every 5 minutes)', 'STARTUP');
             
         } catch (error) {

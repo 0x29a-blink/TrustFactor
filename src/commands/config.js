@@ -2,7 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder
 const DatabaseUtils = require('../utils/database');
 const AuditLogger = require('../utils/logging');
 const { supabase } = require('../config/database');
-const { handleServerSettingsChange } = require('../events/syncHandler');
+const { handleServerSettingsChange } = require('../utils/syncHandler');
 const { getServerSyncStatus, isServerPriority } = require('../utils/syncUtils');
 const logger = require('../utils/logger');
 

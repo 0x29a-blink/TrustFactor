@@ -20,34 +20,37 @@ client.commands = new Collection();
 // Load commands
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
-
+let loadedCommands = 0;
 for (const file of commandFiles) {
     const filePath = path.join(commandsPath, file);
     const command = require(filePath);
     
     if ('data' in command && 'execute' in command) {
-        client.commands.set(command.data.name, command);
-        logger.command(`Loaded command: ${command.data.name}`, 'LOAD');
+            client.commands.set(command.data.name, command);
+            loadedCommands++;
     } else {
         logger.warn(`Command at ${filePath} is missing required "data" or "execute" property.`, 'LOAD');
-    }
+    }    
 }
+logger.command(`Loaded ${loadedCommands} commands.`, 'LOAD');
 
 // Load events
 const eventsPath = path.join(__dirname, 'events');
 const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
-
+let loadedEvents = 0;
 for (const file of eventFiles) {
     const filePath = path.join(eventsPath, file);
     const event = require(filePath);
     
     if (event.once) {
         client.once(event.name, (...args) => event.execute(...args));
+        loadedEvents++;
     } else {
         client.on(event.name, (...args) => event.execute(...args));
+        loadedEvents++;
     }
-    logger.event(`Loaded event: ${event.name}`, 'LOAD');
 }
+logger.event(`Loaded ${loadedEvents} events.`, 'LOAD');
 
 // Global error handling
 process.on('unhandledRejection', error => {

@@ -55,9 +55,6 @@ async function testConnection() {
     }
 }
 
-// Test connection on startup
-testConnection();
-
 module.exports = {
     supabase,
     testConnection

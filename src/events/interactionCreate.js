@@ -125,8 +125,13 @@ async function handleSelectMenuInteraction(interaction) {
     // Config menu select menus
     if (customId.startsWith('config_')) {
         logger.config(`Config select menu used: ${customId}`, 'SELECT');
-        const ConfigCommand = require('../commands/config');
-        await ConfigCommand.handleConfigInteraction(interaction);
+        const ConfigRouter = require('../commands/config/router');
+        if (ConfigRouter.canHandle && ConfigRouter.canHandle(customId)) {
+            await ConfigRouter.handleConfigInteraction(interaction);
+        } else {
+            const ConfigCommand = require('../commands/config');
+            await ConfigCommand.handleConfigInteraction(interaction);
+        }
     }
     
     // Sync menu select menus
@@ -162,8 +167,13 @@ async function handleButtonInteraction(interaction) {
     // Config menu buttons and selects
     else if (customId.startsWith('config_')) {
         logger.config(`Config button clicked: ${customId}`, 'BUTTON');
-        const ConfigCommand = require('../commands/config');
-        await ConfigCommand.handleConfigInteraction(interaction);
+        const ConfigRouter = require('../commands/config/router');
+        if (ConfigRouter.canHandle && ConfigRouter.canHandle(customId)) {
+            await ConfigRouter.handleConfigInteraction(interaction);
+        } else {
+            const ConfigCommand = require('../commands/config');
+            await ConfigCommand.handleConfigInteraction(interaction);
+        }
     }
     
     // Sync menu buttons

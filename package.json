@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/index.js",
+    "start:restart": "node restart.js",
     "dev": "nodemon src/index.js",
     "test": "jest",
     "migrate": "node src/migrations/migrate.js",

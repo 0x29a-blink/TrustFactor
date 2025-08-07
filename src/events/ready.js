@@ -10,6 +10,9 @@ module.exports = {
         logger.lifecycle(`TrustFactor Bot is ready! Logged in as ${client.user.tag}`, 'STARTUP');
         logger.info(`Serving ${client.guilds.cache.size} servers`, 'STARTUP');
         
+        // Display detailed guild information on startup
+        await displayGuildList(client);
+        
         // Set bot activity status
         client.user.setActivity('community scores', { type: 'WATCHING' });
         
@@ -30,11 +33,11 @@ module.exports = {
             await loadPendingVotes(client);
             
             // Clean up expired votes on startup
-            await cleanupExpiredVotes();
+            await cleanupExpiredVotes(client);
             
             // Set up periodic cleanup every 5 minutes
             setInterval(async () => {
-                await cleanupExpiredVotes();
+                await cleanupExpiredVotes(client);
             }, 5 * 60 * 1000); // 5 minutes
             
             logger.info('Periodic vote expiration check enabled (every 5 minutes)', 'STARTUP');
@@ -149,7 +152,7 @@ async function loadPendingVotes(client) {
 /**
  * Clean up expired pending votes on bot startup
  */
-async function cleanupExpiredVotes() {
+async function cleanupExpiredVotes(client) {
     try {
         // First, get the expired votes before updating them
         const { data: expiredVotes, error: selectError } = await supabase
@@ -194,5 +197,58 @@ async function cleanupExpiredVotes() {
         logger.vote('Expired votes cleaned up', 'CLEANUP');
     } catch (error) {
         logger.errorWithStack('Error in cleanupExpiredVotes', error, 'CLEANUP');
+    }
+}
+
+/**
+ * Display all guilds the bot is currently in with their details
+ */
+async function displayGuildList(client) {
+    try {
+        logger.info('📋 Current server list:', 'STARTUP');
+        logger.info('═'.repeat(80), 'STARTUP');
+        
+        // Convert guild cache to array and sort by member count (descending)
+        const guilds = Array.from(client.guilds.cache.values())
+            .sort((a, b) => b.memberCount - a.memberCount);
+        
+        let totalMembers = 0;
+        
+        for (let i = 0; i < guilds.length; i++) {
+            const guild = guilds[i];
+            const index = String(i + 1).padStart(3, ' ');
+            const memberCount = String(guild.memberCount).padStart(6, ' ');
+            totalMembers += guild.memberCount;
+            
+            logger.info(`${index}. ${guild.name} (ID: ${guild.id})`, 'STARTUP');
+            logger.info(`     👥 Members: ${memberCount} | 👑 Owner: ${guild.ownerId}`, 'STARTUP');
+            logger.info(`     📅 Created: ${guild.createdAt.toLocaleDateString()} | 🌍 Region: ${guild.preferredLocale || 'Unknown'}`, 'STARTUP');
+            
+            // Add boost information if applicable
+            if (guild.premiumTier > 0) {
+                logger.info(`     🚀 Boost Level: ${guild.premiumTier} (${guild.premiumSubscriptionCount || 0} boosts)`, 'STARTUP');
+            }
+            
+            logger.info('─'.repeat(60), 'STARTUP');
+        }
+        
+        // Summary statistics
+        logger.info('📊 Summary Statistics:', 'STARTUP');
+        logger.info(`Total Servers: ${guilds.length}`, 'STARTUP');
+        logger.info(`Total Members: ${totalMembers.toLocaleString()}`, 'STARTUP');
+        logger.info(`Average Members per Server: ${Math.round(totalMembers / guilds.length).toLocaleString()}`, 'STARTUP');
+        
+        // Find largest and smallest servers
+        if (guilds.length > 0) {
+            const largest = guilds[0]; // Already sorted by member count descending
+            const smallest = guilds[guilds.length - 1];
+            logger.info(`Largest Server: "${largest.name}" (${largest.memberCount.toLocaleString()} members)`, 'STARTUP');
+            logger.info(`Smallest Server: "${smallest.name}" (${smallest.memberCount.toLocaleString()} members)`, 'STARTUP');
+        }
+        
+        logger.info('═'.repeat(80), 'STARTUP');
+        
+    } catch (error) {
+        logger.errorWithStack('Error displaying guild list', error, 'STARTUP');
     }
 }

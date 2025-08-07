@@ -234,14 +234,20 @@ module.exports = {
             logger.vote(`Created pending vote: ${proposer.displayName} wants to award ${points} points to ${targetUser.displayName}`, 'AWARD');
             
             // In reaction mode, don't auto-approve - let user manually react
-            if (!serverConfig.reaction_mode) {
-                // Automatically record the proposer's approval vote (button mode only)
+            if (!serverConfig.reaction_mode && serverConfig.auto_approval !== false) {
+                // Automatically record the proposer's approval vote (button mode only, if auto-approval is enabled)
                 await DatabaseUtils.recordVote(pendingVote.id, proposer.id, 'approve');
                 logger.vote(`Auto-approved by proposer: ${proposer.displayName}`, 'AWARD');
                 
                 // Send immediate ephemeral confirmation to the user
                 await interaction.followUp({
                     content: `✅ **Award proposal created!** Your vote has been automatically approved on your behalf. ${votesNeeded === 1 ? 'Since only 1 vote is needed, your award will be processed immediately.' : `Waiting for ${votesNeeded - 1} more approval${votesNeeded - 1 !== 1 ? 's' : ''} from other members.`}`,
+                    flags: MessageFlags.Ephemeral
+                });
+            } else if (!serverConfig.reaction_mode) {
+                // Button mode but auto-approval disabled
+                await interaction.followUp({
+                    content: `✅ **Award proposal created!** Use the buttons below to vote on your proposal. ${votesNeeded === 1 ? 'Only 1 vote needed.' : `${votesNeeded} votes needed from members.`}`,
                     flags: MessageFlags.Ephemeral
                 });
             } else {
@@ -277,7 +283,7 @@ module.exports = {
             }
             
             // Check if the vote threshold is met (only relevant in button mode with auto-approval)
-            if (!serverConfig.reaction_mode) {
+            if (!serverConfig.reaction_mode && serverConfig.auto_approval !== false) {
                 const voteCounts = await DatabaseUtils.getVoteCount(pendingVote.id);
                 if (voteCounts.approveCount >= votesNeeded) {
                     logger.vote(`Vote threshold met (${voteCounts.approveCount}/${votesNeeded}) - executing proposal immediately`, 'AWARD');

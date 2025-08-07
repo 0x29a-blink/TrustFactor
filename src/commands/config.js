@@ -112,8 +112,8 @@ module.exports = {
                     inline: true 
                 },
                 { 
-                    name: '🔔 Feedback Settings', 
-                    value: `Success: ${serverConfig.success_feedback ? '✅' : '❌'}\nFailed: ${serverConfig.failed_feedback ? '✅' : '❌'}`, 
+                    name: '🤖 Advanced', 
+                    value: `Status: ${serverConfig.is_active ? '✅ Active' : '❌ Inactive'}\nLog Channel: ${serverConfig.log_channel ? 'Set' : 'None'}\nSync Group: ${serverConfig.sync_group || 'None'}\nSuccess Feedback: ${serverConfig.success_feedback ? '✅' : '❌'}\nFailure Feedback: ${serverConfig.failed_feedback ? '✅' : '❌'}`, 
                     inline: true 
                 },
                 { 
@@ -122,23 +122,13 @@ module.exports = {
                     inline: true 
                 },
                 { 
-                    name: '🤖 Advanced', 
-                    value: `Status: ${serverConfig.is_active ? '✅ Active' : '❌ Inactive'}\nLog Channel: ${serverConfig.log_channel ? 'Set' : 'None'}\nSync Group: ${serverConfig.sync_group || 'None'}\nTesting Mode: ${serverConfig.testing_mode ? '✅' : '❌'}`, 
+                    name: '😀 Reaction Voting', 
+                    value: `Custom Emojis: ${reactionCount}`, 
                     inline: true 
                 },
                 { 
                     name: '🏆 Auto Roles', 
                     value: `Configured: ${Object.keys(serverConfig.auto_role_thresholds || {}).length} roles`, 
-                    inline: true 
-                },
-                { 
-                    name: '😀 Reaction Voting', 
-                    value: `Custom Emojis: ${reactionCount}\nDirect point awards via reactions`, 
-                    inline: true 
-                },
-                { 
-                    name: '🥇 Leaderboard Roles', 
-                    value: `Configured: ${Object.keys(serverConfig.leaderboard_roles || {}).length} roles`, 
                     inline: true 
                 }
             ])
@@ -158,13 +148,8 @@ module.exports = {
                     .setStyle(ButtonStyle.Primary)
                     .setDisabled(isInSyncButNotPriority),
                 new ButtonBuilder()
-                    .setCustomId('config_feedback')
-                    .setLabel('🔔 Feedback')
-                    .setStyle(ButtonStyle.Primary)
-                    .setDisabled(isInSyncButNotPriority),
-                new ButtonBuilder()
-                    .setCustomId('config_appearance')
-                    .setLabel('🎨 Appearance')
+                    .setCustomId('config_advanced')
+                    .setLabel('🤖 Advanced')
                     .setStyle(ButtonStyle.Primary)
                     .setDisabled(isInSyncButNotPriority)
             );
@@ -172,18 +157,18 @@ module.exports = {
         const row2 = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId('config_advanced')
-                    .setLabel('🤖 Advanced')
-                    .setStyle(ButtonStyle.Primary)
-                    .setDisabled(isInSyncButNotPriority),
-                new ButtonBuilder()
-                    .setCustomId('config_autoroles')
-                    .setLabel('🏆 Auto Roles')
+                    .setCustomId('config_appearance')
+                    .setLabel('🎨 Appearance')
                     .setStyle(ButtonStyle.Secondary)
                     .setDisabled(isInSyncButNotPriority),
                 new ButtonBuilder()
                     .setCustomId('config_reactions')
                     .setLabel('😀 Reactions')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(isInSyncButNotPriority),
+                new ButtonBuilder()
+                    .setCustomId('config_autoroles')
+                    .setLabel('🏆 Auto Roles')
                     .setStyle(ButtonStyle.Secondary)
                     .setDisabled(isInSyncButNotPriority),
                 new ButtonBuilder()
@@ -207,48 +192,49 @@ module.exports = {
         await this.updateInteraction(interaction, { embeds: [embed], components });
     },
 
-    async showVotingConfig(interaction, serverConfig, page = 1) {
-        // Determine total pages based on threshold mode
-        const totalPages = serverConfig.threshold_mode === 'formula' ? 3 : 2;
-        
-        // Validate page number - redirect to page 2 if trying to access page 3 in fixed mode
-        if (page === 3 && serverConfig.threshold_mode !== 'formula') {
-            page = 2;
-        }
-        
+    async showVotingConfig(interaction, serverConfig) {
         const embed = new EmbedBuilder()
             .setColor(serverConfig.embed_color || '#5865F2')
-            .setTitle(`🗳️ Voting Configuration (Page ${page}/${totalPages})`)
-            .setFooter({ text: `Page ${page} of ${totalPages} • Use navigation buttons to explore all options` });
+            .setTitle('🗳️ Voting Configuration');
 
-        if (page === 1) {
-            // Page 1: Basic voting settings
-            embed.setDescription('Configure basic voting settings and thresholds.')
+        // Set description based on threshold mode
+        if (serverConfig.threshold_mode === 'formula') {
+            embed.setDescription('**Mode: Dynamic Threshold** - Voting requirements calculated using formula: Base + (Point Value × Multiplier)')
                 .addFields([
-                    { name: 'Current Threshold', value: serverConfig.threshold_mode === 'formula' ? `Formula-based (base: ${serverConfig.formula_base}, mult: ${serverConfig.formula_multiplier}x)` : `${serverConfig.threshold} votes required`, inline: true },
+                    { name: 'Current Threshold', value: `Formula-based (base: ${serverConfig.formula_base || 2}, mult: ${serverConfig.formula_multiplier || 1}x)`, inline: true },
                     { name: 'Voting Timeout', value: `${serverConfig.voting_timeout} minutes`, inline: true },
-                    { name: 'Threshold Mode', value: serverConfig.threshold_mode === 'formula' ? 'Formula-based' : 'Fixed', inline: true },
-                    { name: 'Reaction Mode', value: serverConfig.reaction_mode ? '✅ Enabled (vote with 👍/👎)' : '❌ Disabled (vote with buttons)', inline: false }
+                    { name: 'Formula Preview', value: `For 5 points: ${Math.ceil((serverConfig.formula_base || 2) + (5 * (serverConfig.formula_multiplier || 1)))} votes needed`, inline: true },
+                    { name: 'Reaction Mode', value: serverConfig.reaction_mode ? '✅ Enabled (vote with 👍/👎)' : '❌ Disabled (vote with buttons)', inline: true },
+                    { name: 'Auto-Approval', value: serverConfig.auto_approval !== false ? '✅ Enabled (proposers automatically approve their own proposals)' : '❌ Disabled (proposers must wait for others to vote)', inline: true }
                 ]);
-        } else if (page === 2) {
-            // Page 2: Advanced voting settings
-            embed.setDescription('Configure advanced voting features and behavior.')
+        } else {
+            embed.setDescription('**Mode: Fixed Threshold** - A set number of votes required for all proposals')
                 .addFields([
-                    { name: 'Auto-Approval', value: serverConfig.auto_approval !== false ? '✅ Enabled (proposers automatically approve their own proposals)' : '❌ Disabled (proposers must wait for others to vote)', inline: false }
-                ]);
-        } else if (page === 3) {
-            // Page 3: Formula settings (only available in formula mode)
-            embed.setDescription('Configure formula-based threshold calculations.')
-                .addFields([
-                    { name: 'Formula Base', value: `${serverConfig.formula_base || 2}`, inline: true },
-                    { name: 'Formula Multiplier', value: `${serverConfig.formula_multiplier || 1}x`, inline: true },
-                    { name: 'Formula Preview', value: `For 5 points: ${Math.ceil((serverConfig.formula_base || 2) + (5 * (serverConfig.formula_multiplier || 1)))} votes needed`, inline: false },
-                    { name: 'How it Works', value: 'Required votes = Base + (Point Value × Multiplier)', inline: false }
+                    { name: 'Current Threshold', value: `${serverConfig.threshold} votes required`, inline: true },
+                    { name: 'Voting Timeout', value: `${serverConfig.voting_timeout} minutes`, inline: true },
+                    { name: 'Reaction Mode', value: serverConfig.reaction_mode ? '✅ Enabled (vote with 👍/👎)' : '❌ Disabled (vote with buttons)', inline: true },
+                    { name: 'Auto-Approval', value: serverConfig.auto_approval !== false ? '✅ Enabled (proposers automatically approve their own proposals)' : '❌ Disabled (proposers must wait for others to vote)', inline: true }
                 ]);
         }
 
-        const row1 = new ActionRowBuilder()
-            .addComponents(
+        // Row 1: Mode-specific threshold/formula configuration
+        const row1 = new ActionRowBuilder();
+        if (serverConfig.threshold_mode === 'formula') {
+            // Dynamic mode: Formula Base selection
+            row1.addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('config_formula_base_select')
+                    .setPlaceholder('Set formula base...')
+                    .addOptions([
+                        { label: '1 (Minimum)', value: '1', description: 'Base threshold of 1' },
+                        { label: '2 (Standard)', value: '2', description: 'Base threshold of 2' },
+                        { label: '3 (Moderate)', value: '3', description: 'Base threshold of 3' },
+                        { label: 'Custom...', value: 'custom', description: 'Enter custom base value' }
+                    ])
+            );
+        } else {
+            // Fixed mode: Threshold selection
+            row1.addComponents(
                 new StringSelectMenuBuilder()
                     .setCustomId('config_threshold_select')
                     .setPlaceholder('Set voting threshold...')
@@ -261,9 +247,27 @@ module.exports = {
                         { label: 'Custom...', value: 'custom', description: 'Enter custom value' }
                     ])
             );
+        }
 
-        const row2 = new ActionRowBuilder()
-            .addComponents(
+        // Row 2: Mode-specific second configuration or timeout
+        const row2 = new ActionRowBuilder();
+        if (serverConfig.threshold_mode === 'formula') {
+            // Dynamic mode: Formula Multiplier selection
+            row2.addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('config_formula_multiplier_select')
+                    .setPlaceholder('Set formula multiplier...')
+                    .addOptions([
+                        { label: '0.5x (Half)', value: '0.5', description: 'Half point value' },
+                        { label: '1x (Equal)', value: '1', description: 'Equal to point value' },
+                        { label: '1.5x (Higher)', value: '1.5', description: '1.5x point value' },
+                        { label: '2x (Double)', value: '2', description: 'Double point value' },
+                        { label: 'Custom...', value: 'custom', description: 'Enter custom multiplier' }
+                    ])
+            );
+        } else {
+            // Fixed mode: Voting Timeout (moved to row 2 for fixed mode)
+            row2.addComponents(
                 new StringSelectMenuBuilder()
                     .setCustomId('config_timeout_select')
                     .setPlaceholder('Set voting timeout...')
@@ -276,104 +280,97 @@ module.exports = {
                         { label: 'Custom...', value: 'custom', description: 'Enter custom value' }
                     ])
             );
+        }
 
-        const row3 = new ActionRowBuilder()
-            .addComponents(
+        // Row 3: Voting timeout for dynamic mode, or buttons for fixed mode
+        const row3 = new ActionRowBuilder();
+        if (serverConfig.threshold_mode === 'formula') {
+            // Dynamic mode: Voting Timeout
+            row3.addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('config_timeout_select')
+                    .setPlaceholder('Set voting timeout...')
+                    .addOptions([
+                        { label: '5 minutes', value: '5', description: 'Quick voting' },
+                        { label: '15 minutes', value: '15', description: 'Standard timeout' },
+                        { label: '30 minutes', value: '30', description: 'Extended voting' },
+                        { label: '60 minutes', value: '60', description: 'Long voting period' },
+                        { label: '2 hours', value: '120', description: 'Very long period' },
+                        { label: 'Custom...', value: 'custom', description: 'Enter custom value' }
+                    ])
+            );
+        } else {
+            // Fixed mode: Mode toggle and reaction mode toggle
+            row3.addComponents(
                 new ButtonBuilder()
                     .setCustomId('config_threshold_mode_toggle')
-                    .setLabel(`Mode: ${serverConfig.threshold_mode === 'formula' ? 'Formula-based' : 'Fixed Threshold'}`)
-                    .setStyle(serverConfig.threshold_mode === 'formula' ? ButtonStyle.Secondary : ButtonStyle.Primary)
-                    .setEmoji(serverConfig.threshold_mode === 'formula' ? '📊' : '🔢'),
+                    .setLabel('Switch to Dynamic')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('📊'),
                 new ButtonBuilder()
                     .setCustomId('config_reaction_mode_toggle')
                     .setLabel(`Reactions: ${serverConfig.reaction_mode ? 'ON' : 'OFF'}`)
                     .setStyle(serverConfig.reaction_mode ? ButtonStyle.Success : ButtonStyle.Secondary)
-                    .setEmoji(serverConfig.reaction_mode ? '👍' : '🔘')
-            );
-
-        // Create navigation row with dynamic buttons based on current page
-        const navigationButtons = [];
-        
-        // Previous page button (if not on page 1)
-        if (page > 1) {
-            navigationButtons.push(
+                    .setEmoji(serverConfig.reaction_mode ? '👍' : '🔘'),
                 new ButtonBuilder()
-                    .setCustomId(`config_voting_page_${page - 1}`)
-                    .setLabel(`← Page ${page - 1}`)
-                    .setStyle(ButtonStyle.Secondary)
+                    .setCustomId('config_auto_approval_toggle')
+                    .setLabel(`Auto-Approval: ${serverConfig.auto_approval !== false ? 'ON' : 'OFF'}`)
+                    .setStyle(serverConfig.auto_approval !== false ? ButtonStyle.Success : ButtonStyle.Danger)
+                    .setEmoji('⚡')
             );
         }
-        
-        // Next page button (if not on last page)
-        if (page < totalPages) {
-            navigationButtons.push(
+
+        // Row 4: Toggle buttons for dynamic mode, navigation for fixed mode
+        const row4 = new ActionRowBuilder();
+        if (serverConfig.threshold_mode === 'formula') {
+            // Dynamic mode: Mode toggle and reaction mode toggle
+            row4.addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`config_voting_page_${page + 1}`)
-                    .setLabel(`Page ${page + 1} ➡️`)
-                    .setStyle(ButtonStyle.Secondary)
+                    .setCustomId('config_threshold_mode_toggle')
+                    .setLabel('Switch to Fixed')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🔢'),
+                new ButtonBuilder()
+                    .setCustomId('config_reaction_mode_toggle')
+                    .setLabel(`Reactions: ${serverConfig.reaction_mode ? 'ON' : 'OFF'}`)
+                    .setStyle(serverConfig.reaction_mode ? ButtonStyle.Success : ButtonStyle.Secondary)
+                    .setEmoji(serverConfig.reaction_mode ? '👍' : '🔘'),
+                new ButtonBuilder()
+                    .setCustomId('config_auto_approval_toggle')
+                    .setLabel(`Auto-Approval: ${serverConfig.auto_approval !== false ? 'ON' : 'OFF'}`)
+                    .setStyle(serverConfig.auto_approval !== false ? ButtonStyle.Success : ButtonStyle.Danger)
+                    .setEmoji('⚡')
+            );
+        } else {
+            // Fixed mode: Navigation buttons
+            row4.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('config_back_main')
+                    .setLabel('← Back to Main')
+                    .setStyle(ButtonStyle.Primary)
             );
         }
-        
-        // Back to main button (always present)
-        navigationButtons.push(
-            new ButtonBuilder()
-                .setCustomId('config_back_main')
-                .setLabel('← Back to Main')
-                .setStyle(ButtonStyle.Primary)
-        );
-        
-        const navigationRow = new ActionRowBuilder().addComponents(...navigationButtons);
 
-        const row4 = new ActionRowBuilder()
-            .addComponents(
-                new StringSelectMenuBuilder()
-                    .setCustomId('config_formula_base_select')
-                    .setPlaceholder('Set formula base...')
-                    .setDisabled(serverConfig.threshold_mode !== 'formula')
-                    .addOptions([
-                        { label: '1 (Minimum)', value: '1', description: 'Base threshold of 1' },
-                        { label: '2 (Standard)', value: '2', description: 'Base threshold of 2' },
-                        { label: '3 (Moderate)', value: '3', description: 'Base threshold of 3' },
-                        { label: 'Custom...', value: 'custom', description: 'Enter custom base value' }
-                    ])
+        // Row 5: Navigation for dynamic mode
+        const row5 = new ActionRowBuilder();
+        if (serverConfig.threshold_mode === 'formula') {
+            // Dynamic mode: Navigation buttons
+            row5.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('config_back_main')
+                    .setLabel('← Back to Main')
+                    .setStyle(ButtonStyle.Primary)
             );
+        }
 
-        const row5 = new ActionRowBuilder()
-            .addComponents(
-                new StringSelectMenuBuilder()
-                    .setCustomId('config_formula_multiplier_select')
-                    .setPlaceholder('Set formula multiplier...')
-                    .setDisabled(serverConfig.threshold_mode !== 'formula')
-                    .addOptions([
-                        { label: '0.5x (Half)', value: '0.5', description: 'Half point value' },
-                        { label: '1x (Equal)', value: '1', description: 'Equal to point value' },
-                        { label: '1.5x (Higher)', value: '1.5', description: '1.5x point value' },
-                        { label: '2x (Double)', value: '2', description: 'Double point value' },
-                        { label: 'Custom...', value: 'custom', description: 'Enter custom multiplier' }
-                    ])
-            );
-
-        // Build components array based on page (max 5 rows)
+        // Build components array based on mode (max 5 rows)
         let components;
-        
-        if (page === 1) {
-            // Page 1: Basic voting settings (always includes navigation)
-            components = [row1, row2, row3, navigationRow];
-        } else if (page === 2) {
-            // Page 2: Advanced settings with auto-approval toggle
-            const autoApprovalRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('config_auto_approval_toggle')
-                        .setLabel(`Auto-Approval: ${serverConfig.auto_approval !== false ? 'ON' : 'OFF'}`)
-                        .setStyle(serverConfig.auto_approval !== false ? ButtonStyle.Success : ButtonStyle.Danger)
-                        .setEmoji('⚡')
-                );
-            
-            components = [autoApprovalRow, navigationRow];
-        } else if (page === 3) {
-            // Page 3: Formula settings (only available in formula mode)
-            components = [row4, row5, navigationRow];
+        if (serverConfig.threshold_mode === 'formula') {
+            // Dynamic mode: All 5 rows used
+            components = [row1, row2, row3, row4, row5];
+        } else {
+            // Fixed mode: 4 rows used
+            components = [row1, row2, row3, row4];
         }
 
         await this.updateInteraction(interaction, { embeds: [embed], components });
@@ -465,39 +462,7 @@ module.exports = {
         await this.updateInteraction(interaction, { embeds: [embed], components: [row1, row2, row3, row4, row5] });
     },
 
-    async showFeedbackConfig(interaction, serverConfig) {
-        const embed = new EmbedBuilder()
-            .setColor(serverConfig.embed_color || '#5865F2')
-            .setTitle('🔔 Feedback Configuration')
-            .setDescription('Configure when and how the bot provides feedback')
-            .addFields([
-                { name: 'Success Feedback', value: serverConfig.success_feedback ? '✅ Enabled' : '❌ Disabled', inline: true },
-                { name: 'Failed Feedback', value: serverConfig.failed_feedback ? '✅ Enabled' : '❌ Disabled', inline: true }
-            ])
-            .setFooter({ text: 'Toggle feedback settings' });
 
-        const row1 = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('config_success_feedback_toggle')
-                    .setLabel(`Success Feedback: ${serverConfig.success_feedback ? 'ON' : 'OFF'}`)
-                    .setStyle(serverConfig.success_feedback ? ButtonStyle.Success : ButtonStyle.Danger),
-                new ButtonBuilder()
-                    .setCustomId('config_failed_feedback_toggle')
-                    .setLabel(`Failed Feedback: ${serverConfig.failed_feedback ? 'ON' : 'OFF'}`)
-                    .setStyle(serverConfig.failed_feedback ? ButtonStyle.Success : ButtonStyle.Danger)
-            );
-
-        const row2 = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('config_back_main')
-                    .setLabel('← Back')
-                    .setStyle(ButtonStyle.Primary)
-            );
-
-        await this.updateInteraction(interaction, { embeds: [embed], components: [row1, row2] });
-    },
 
     async showAppearanceConfig(interaction, serverConfig) {
         const embed = new EmbedBuilder()
@@ -539,13 +504,15 @@ module.exports = {
         const embed = new EmbedBuilder()
             .setColor(serverConfig.embed_color || '#5865F2')
             .setTitle('🤖 Advanced Configuration')
-            .setDescription('Configure advanced bot settings and logging')
+            .setDescription('Configure advanced bot settings, logging, and feedback options')
             .addFields([
                 { name: 'Log Channel', value: serverConfig.log_channel ? `<#${serverConfig.log_channel}>` : 'Not set', inline: true },
-                { name: 'Bot Status', value: serverConfig.is_active ? '✅ Active' : '❌ Inactive', inline: true },
-                { name: 'Sync Group', value: serverConfig.sync_group || 'None', inline: true }
+                { name: 'Bot Active', value: serverConfig.is_active ? '✅ Active' : '❌ Inactive', inline: true },
+                { name: 'Sync Group Display', value: serverConfig.sync_group || 'None', inline: true },
+                { name: 'Success Message', value: serverConfig.success_feedback ? '✅ Enabled' : '❌ Disabled', inline: true },
+                { name: 'Failure Message', value: serverConfig.failed_feedback ? '✅ Enabled' : '❌ Disabled', inline: true }
             ])
-            .setFooter({ text: 'Configure advanced settings' });
+            .setFooter({ text: 'Configure advanced settings and feedback options' });
 
         const row1 = new ActionRowBuilder()
             .addComponents(
@@ -563,15 +530,30 @@ module.exports = {
             .addComponents(
                 new ButtonBuilder()
                     .setCustomId('config_bot_status_toggle')
-                    .setLabel(`Bot: ${serverConfig.is_active ? 'Active' : 'Inactive'}`)
-                    .setStyle(serverConfig.is_active ? ButtonStyle.Success : ButtonStyle.Danger),
+                    .setLabel(`Bot Active: ${serverConfig.is_active ? 'ON' : 'OFF'}`)
+                    .setStyle(serverConfig.is_active ? ButtonStyle.Success : ButtonStyle.Danger)
+                    .setEmoji('🤖'),
+                new ButtonBuilder()
+                    .setCustomId('config_success_feedback_toggle')
+                    .setLabel(`Success Message: ${serverConfig.success_feedback ? 'ON' : 'OFF'}`)
+                    .setStyle(serverConfig.success_feedback ? ButtonStyle.Success : ButtonStyle.Danger)
+                    .setEmoji('✅'),
+                new ButtonBuilder()
+                    .setCustomId('config_failed_feedback_toggle')
+                    .setLabel(`Failure Message: ${serverConfig.failed_feedback ? 'ON' : 'OFF'}`)
+                    .setStyle(serverConfig.failed_feedback ? ButtonStyle.Success : ButtonStyle.Danger)
+                    .setEmoji('❌')
+            );
+
+        const row3 = new ActionRowBuilder()
+            .addComponents(
                 new ButtonBuilder()
                     .setCustomId('config_back_main')
                     .setLabel('← Back')
                     .setStyle(ButtonStyle.Primary)
             );
 
-        await this.updateInteraction(interaction, { embeds: [embed], components: [row1, row2] });
+        await this.updateInteraction(interaction, { embeds: [embed], components: [row1, row2, row3] });
     },
 
     async showAutoRolesConfig(interaction, serverConfig) {
@@ -897,7 +879,7 @@ module.exports = {
         if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
         
         logger.config(`Config interaction: ${interaction.customId} by ${interaction.user.tag}`, 'INTERACTION');
-        logger.verbose(`Interaction type: ${interaction.type}, values: ${JSON.stringify(interaction.values)}`, 'INTERACTION');
+        logger.verbose(`Interaction type: ${interaction.type}${interaction.values ? `, values: ${JSON.stringify(interaction.values)}` : ''}`, 'INTERACTION');
         
         // Check if user has permission to manage guild (required for config access)
         if (!interaction.member.permissions.has('ManageGuild')) {
@@ -909,7 +891,6 @@ module.exports = {
         }
         
         // Check if this interaction is from the original user who executed the command
-        // We'll check if the message has an interaction and compare user IDs
         const message = interaction.message;
         if (message && message.interaction && message.interaction.user.id !== interaction.user.id) {
             await interaction.reply({
@@ -922,414 +903,15 @@ module.exports = {
         const serverId = interaction.guild.id;
         const serverConfig = await DatabaseUtils.getServerConfig(serverId);
         
-        // Check if this is a select menu interaction that needs to show a modal
-        if (interaction.isStringSelectMenu() && interaction.values && interaction.values[0] === 'custom') {
-            // Handle modal display without deferring first
-            if (interaction.customId === 'config_threshold_select') {
-                await this.showCustomThresholdModal(interaction);
-                return;
-            } else if (interaction.customId === 'config_timeout_select') {
-                await this.showCustomTimeoutModal(interaction);
-                return;
-            } else if (interaction.customId === 'config_cooldown_select') {
-                await this.showCustomCooldownModal(interaction);
-                return;
-            } else if (interaction.customId === 'config_color_select') {
-                await this.showCustomColorModal(interaction);
-                return;
-            } else if (interaction.customId === 'config_point_range_select') {
-                await this.showCustomPointRangeModal(interaction);
-                return;
-            } else if (interaction.customId === 'config_daily_limit_select') {
-                await this.showCustomDailyLimitModal(interaction);
-                return;
-            } else if (interaction.customId === 'config_min_vote_magnitude_select') {
-                await this.showCustomMinVoteMagnitudeModal(interaction);
-                return;
-            } else if (interaction.customId === 'config_log_channel_select') {
-                await this.showCustomLogChannelModal(interaction);
-                return;
-            } else if (interaction.customId === 'config_formula_base_select') {
-                await this.showCustomFormulaBaseModal(interaction);
-                return;
-            } else if (interaction.customId === 'config_formula_multiplier_select') {
-                await this.showCustomFormulaMultiplierModal(interaction);
-                return;
-            }
-        }
+        // Handle modal-triggering interactions (no defer needed)
+        const modalResult = await this.handleModalTriggeringInteractions(interaction, serverConfig);
+        if (modalResult) return; // Early return if modal was shown
         
-        // Check if this is a button interaction that needs to show a modal
-        if (interaction.isButton()) {
-            // Handle modal display without deferring first
-            if (interaction.customId === 'config_autoroles_add') {
-                await this.showAddAutoRoleModal(interaction);
-                return;
-            } else if (interaction.customId === 'config_reactions_add') {
-                await this.startEmojiAddProcess(interaction);
-                return;
-            } else if (interaction.customId === 'config_blocked_channels_add') {
-                await this.startBlockedChannelAddProcess(interaction);
-                return;
-            } else if (interaction.customId === 'config_leaderboard_roles_add_positive') {
-                await this.showAddLeaderboardRoleModal(interaction, 'positive');
-                return;
-            } else if (interaction.customId === 'config_leaderboard_roles_add_negative') {
-                await this.showAddLeaderboardRoleModal(interaction, 'negative');
-                return;
-            } else if (interaction.customId.startsWith('config_autorole_edit_select')) {
-                // This will be handled by select menu logic, but we need to check for edit modal
-                const [threshold, roleId] = interaction.values ? interaction.values[0].split(':') : [null, null];
-                if (threshold && roleId) {
-                    await this.showEditAutoRoleModal(interaction, threshold, roleId);
-                    return;
-                }
-            }
-        }
-        
-        // Check if this is a select menu interaction for auto roles that shows modals
-        if (interaction.isStringSelectMenu()) {
-            if (interaction.customId === 'config_autorole_edit_select') {
-                const [threshold, roleId] = interaction.values[0].split(':');
-                await this.showEditAutoRoleModal(interaction, threshold, roleId);
-                return;
-            } else if (interaction.customId === 'config_autorole_select_role') {
-                const roleId = interaction.values[0];
-                await this.showAutoRoleThresholdModal(interaction, roleId);
-                return;
-            } else if (interaction.customId.startsWith('config_leaderboard_role_select_role_')) {
-                const leaderboardType = interaction.customId.split('_').pop();
-                const roleId = interaction.values[0];
-                await this.showLeaderboardRolePositionModal(interaction, roleId, leaderboardType);
-                return;
-            } else if (interaction.customId === 'config_leaderboard_role_edit_select') {
-                const [position, roleId, leaderboardType] = interaction.values[0].split(':');
-                await this.showEditLeaderboardRoleModal(interaction, position, roleId, leaderboardType);
-                return;
-            } else if (interaction.customId === 'config_reaction_edit_select') {
-                const emoji = interaction.values[0];
-                await this.showEditReactionModal(interaction, serverConfig, emoji);
-                return;
-            }
-        }
-        
-        // For all other interactions, defer update as normal
+        // For all other interactions, defer update
         await interaction.deferUpdate();
         
         try {
-            
-            // Handle main menu navigation
-            if (interaction.customId === 'config_voting') {
-                await this.showVotingConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_points') {
-                await this.showPointsConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_feedback') {
-                await this.showFeedbackConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_appearance') {
-                await this.showAppearanceConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_advanced') {
-                await this.showAdvancedConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_autoroles') {
-                await this.showAutoRolesConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_reactions') {
-                await this.showReactionConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_leaderboard_roles') {
-                await this.showLeaderboardRolesConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_refresh' || interaction.customId === 'config_back_main' || interaction.customId === 'config_main') {
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                await this.showMainConfigMenu(interaction, updatedConfig);
-            }
-            
-            // Handle voting config page navigation
-            else if (interaction.customId.startsWith('config_voting_page_')) {
-                const targetPage = parseInt(interaction.customId.split('_').pop());
-                await this.showVotingConfig(interaction, serverConfig, targetPage);
-            } else if (interaction.customId === 'config_points_next') {
-                await this.showFeedbackConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_feedback_next') {
-                await this.showAppearanceConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_appearance_next') {
-                await this.showAdvancedConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_advanced_next') {
-                await this.showAutoRolesConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_autoroles_next') {
-                await this.showVotingConfig(interaction, serverConfig);
-            }
-            
-            // Handle voting config updates
-            else if (interaction.customId === 'config_threshold_select') {
-                const value = interaction.values[0];
-                // Skip if it's 'custom' since that's handled in early detection
-                if (value !== 'custom') {
-                    await this.updateServerConfig(serverId, { threshold: parseInt(value) });
-                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                    await this.showVotingConfig(interaction, updatedConfig);
-                }
-            } else if (interaction.customId === 'config_timeout_select') {
-                const value = interaction.values[0];
-                // Skip if it's 'custom' since that's handled in early detection
-                if (value !== 'custom') {
-                    await this.updateServerConfig(serverId, { voting_timeout: parseInt(value) });
-                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                    await this.showVotingConfig(interaction, updatedConfig);
-                }
-            } else if (interaction.customId === 'config_threshold_mode_select') {
-                const value = interaction.values[0];
-                await this.updateServerConfig(serverId, { threshold_mode: value });
-                
-                // Log the configuration change
-                await this.logConfigChange(interaction, 'Threshold Mode', 
-                    serverConfig.threshold_mode === 'fixed' ? 'Fixed' : 'Formula-based', 
-                    value === 'fixed' ? 'Fixed' : 'Formula-based'
-                );
-                
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                await this.showVotingConfig(interaction, updatedConfig);
-            } else if (interaction.customId === 'config_formula_base_select') {
-                const value = interaction.values[0];
-                // Skip if it's 'custom' since that's handled in early detection
-                if (value !== 'custom') {
-                    await this.updateServerConfig(serverId, { formula_base: parseInt(value) });
-                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                    await this.showVotingConfig(interaction, updatedConfig);
-                }
-            } else if (interaction.customId === 'config_formula_multiplier_select') {
-                const value = interaction.values[0];
-                // Skip if it's 'custom' since that's handled in early detection
-                if (value !== 'custom') {
-                    await this.updateServerConfig(serverId, { formula_multiplier: parseFloat(value) });
-                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                    await this.showVotingConfig(interaction, updatedConfig);
-                }
-            } else if (interaction.customId === 'config_threshold_mode_toggle') {
-                const newMode = serverConfig.threshold_mode === 'formula' ? 'fixed' : 'formula';
-                await this.updateServerConfig(serverId, { threshold_mode: newMode });
-                await this.logConfigChange(interaction, 'Threshold Mode', 
-                    serverConfig.threshold_mode, 
-                    newMode
-                );
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                // Preserve the current page when updating
-                const currentPage = interaction.message.embeds[0]?.title?.includes('Page 2') ? 2 : 1;
-                await this.showVotingConfig(interaction, updatedConfig, currentPage);
-            }
-            
-            // Handle reaction mode toggle
-            else if (interaction.customId === 'config_reaction_mode_toggle') {
-                const newValue = !serverConfig.reaction_mode;
-                await this.updateServerConfig(serverId, { reaction_mode: newValue });
-                await this.logConfigChange(interaction, 'Reaction Mode', 
-                    serverConfig.reaction_mode ? 'Enabled' : 'Disabled',
-                    newValue ? 'Enabled' : 'Disabled'
-                );
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                await this.showVotingConfig(interaction, updatedConfig, 1); // Show page 1 where reaction mode is now located
-            }
-            
-            // Handle auto-approval toggle
-            else if (interaction.customId === 'config_auto_approval_toggle') {
-                const newValue = serverConfig.auto_approval === false ? true : false;
-                await this.updateServerConfig(serverId, { auto_approval: newValue });
-                await this.logConfigChange(interaction, 'Auto-Approval', 
-                    serverConfig.auto_approval !== false ? 'Enabled' : 'Disabled',
-                    newValue ? 'Enabled' : 'Disabled'
-                );
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                await this.showVotingConfig(interaction, updatedConfig, 2);
-            } else if (interaction.customId === 'config_point_range_select') {
-                const value = interaction.values[0];
-                // Skip if it's 'custom' since that's handled in early detection
-                if (value !== 'custom') {
-                    const range = parseInt(value);
-                    await this.updateServerConfig(serverId, { 
-                        min_points_per_award: -range, 
-                        max_points_per_award: range 
-                    });
-                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                    await this.showPointsConfig(interaction, updatedConfig);
-                }
-            } else if (interaction.customId === 'config_min_vote_magnitude_select') {
-                const value = interaction.values[0];
-                // Skip if it's 'custom' since that's handled in early detection
-                if (value !== 'custom') {
-                    const magnitude = parseInt(value);
-                    await this.updateServerConfig(serverId, { 
-                        min_vote_magnitude: magnitude 
-                    });
-                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                    await this.showPointsConfig(interaction, updatedConfig);
-                }
-            } else if (interaction.customId === 'config_daily_limit_select') {
-                const value = interaction.values[0];
-                // Skip if it's 'custom' since that's handled in early detection
-                if (value !== 'custom') {
-                    if (value === 'none') {
-                        await this.updateServerConfig(serverId, { daily_point_limit: null });
-                        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                        await this.showPointsConfig(interaction, updatedConfig);
-                    } else {
-                        await this.updateServerConfig(serverId, { daily_point_limit: parseInt(value) });
-                        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                        await this.showPointsConfig(interaction, updatedConfig);
-                    }
-                }
-            } else if (interaction.customId === 'config_cooldown_select') {
-                const value = interaction.values[0];
-                // Skip if it's 'custom' since that's handled in early detection
-                if (value !== 'custom') {
-                    await this.updateServerConfig(serverId, { user_cooldown_minutes: parseInt(value) });
-                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                    await this.showPointsConfig(interaction, updatedConfig);
-                }
-            }
-            
-            // Handle toggle buttons
-            else if (interaction.customId === 'config_success_feedback_toggle') {
-                await this.updateServerConfig(serverId, { success_feedback: !serverConfig.success_feedback });
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                await this.showFeedbackConfig(interaction, updatedConfig);
-            } else if (interaction.customId === 'config_failed_feedback_toggle') {
-                await this.updateServerConfig(serverId, { failed_feedback: !serverConfig.failed_feedback });
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                await this.showFeedbackConfig(interaction, updatedConfig);
-            } else if (interaction.customId === 'config_reaction_mode_toggle') {
-                await this.updateServerConfig(serverId, { reaction_mode: !serverConfig.reaction_mode });
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                await this.showFeedbackConfig(interaction, updatedConfig);
-            } else if (interaction.customId === 'config_bot_status_toggle') {
-                const currentStatus = serverConfig.is_active;
-                const newStatus = !currentStatus;
-                await this.updateServerConfig(serverId, { is_active: newStatus });
-                
-                // Log the configuration change
-                await this.logConfigChange(interaction, 'Bot Status', 
-                    currentStatus ? 'Active' : 'Inactive', 
-                    newStatus ? 'Active' : 'Inactive'
-                );
-                
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                await this.showAdvancedConfig(interaction, updatedConfig);
-            }
-            
-            // Handle advanced settings updates
-            else if (interaction.customId === 'config_log_channel_select') {
-                const value = interaction.values[0];
-                // Skip if it's 'custom' since that's handled in early detection
-                if (value !== 'custom') {
-                    if (value === 'none') {
-                        await this.updateServerConfig(serverId, { log_channel: null });
-                        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                        await this.showAdvancedConfig(interaction, updatedConfig);
-                    } else if (value === 'current') {
-                        await this.updateServerConfig(serverId, { log_channel: interaction.channel.id });
-                        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                        await this.showAdvancedConfig(interaction, updatedConfig);
-                    }
-                }
-            }
-            
-            // Handle appearance updates
-            else if (interaction.customId === 'config_color_select') {
-                const value = interaction.values[0];
-                // Skip if it's 'custom' since that's handled in early detection
-                if (value !== 'custom') {
-                    await this.updateServerConfig(serverId, { embed_color: value });
-                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                    await this.showAppearanceConfig(interaction, updatedConfig);
-                }
-            }
-            
-            // Handle reaction-based voting configuration
-            else if (interaction.customId === 'config_reactions_add') {
-                await this.startEmojiAddProcess(interaction);
-            } else if (interaction.customId === 'config_reactions_edit') {
-                await this.showEditReactionSelect(interaction, serverConfig);
-            } else if (interaction.customId === 'config_reactions_remove') {
-                await this.showRemoveReactionSelect(interaction, serverConfig);
-            } else if (interaction.customId === 'config_reactions_defaults') {
-                await this.showDefaultReactionsPreview(interaction, serverConfig);
-            } else if (interaction.customId === 'config_reactions_confirm_defaults') {
-                await this.setupDefaultReactions(interaction, serverConfig);
-            } else if (interaction.customId === 'config_reactions_cancel_defaults') {
-                await this.showReactionConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_reactions_cancel_add') {
-                await this.handleEmojiAddCancel(interaction);
-            } else if (interaction.customId === 'config_reactions_clear') {
-                await this.showClearAllReactionsConfirmation(interaction, serverConfig);
-            } else if (interaction.customId === 'config_reactions_confirm_clear') {
-                await this.clearAllReactions(interaction, serverConfig);
-            } else if (interaction.customId === 'config_reactions_cancel_clear') {
-                await this.showReactionConfig(interaction, serverConfig);
-            
-            // Handle blocked channels configuration
-            } else if (interaction.customId === 'config_blocked_channels') {
-                await this.showBlockedChannelsConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_blocked_channels_remove') {
-                await this.showRemoveBlockedChannelSelect(interaction, serverConfig);
-            } else if (interaction.customId === 'config_blocked_channels_clear') {
-                await this.showClearAllBlockedChannelsConfirmation(interaction, serverConfig);
-            } else if (interaction.customId === 'config_blocked_channels_clear_confirm') {
-                await this.clearAllBlockedChannels(interaction, serverConfig);
-            } else if (interaction.customId === 'config_blocked_channels_cancel_clear') {
-                await this.showBlockedChannelsConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_blocked_channels_cancel_add') {
-                await this.showBlockedChannelsConfig(interaction, serverConfig);
-            
-            // Handle auto roles configuration (non-modal interactions)
-            } else if (interaction.customId === 'config_autoroles_edit') {
-                await this.showEditAutoRoleSelect(interaction, serverConfig);
-            } else if (interaction.customId === 'config_autoroles_remove') {
-                await this.showRemoveAutoRoleSelect(interaction, serverConfig);
-            } else if (interaction.customId === 'config_autoroles_test') {
-                await this.showAutoRoleTestResults(interaction, serverConfig);
-            } else if (interaction.customId === 'config_autoroles_clear_all') {
-                await this.showClearAllAutoRolesConfirmation(interaction, serverConfig);
-            } else if (interaction.customId === 'config_autoroles_confirm_clear') {
-                await this.clearAllAutoRoles(interaction, serverConfig);
-            } else if (interaction.customId === 'config_autoroles_cancel_clear') {
-                await this.showAutoRolesConfig(interaction, serverConfig);
-            }
-            
-            // Handle auto roles select menus (non-modal interactions)
-            else if (interaction.customId === 'config_autorole_remove_select') {
-                const [threshold, roleId] = interaction.values[0].split(':');
-                await this.removeAutoRole(interaction, serverConfig, threshold, roleId);
-            }
-            
-            // Handle leaderboard roles configuration (non-modal interactions)
-            else if (interaction.customId === 'config_leaderboard_roles_edit') {
-                await this.showEditLeaderboardRoleSelect(interaction, serverConfig);
-            } else if (interaction.customId === 'config_leaderboard_roles_remove') {
-                await this.showRemoveLeaderboardRoleSelect(interaction, serverConfig);
-            } else if (interaction.customId === 'config_leaderboard_roles_test') {
-                await this.showLeaderboardRoleTestResults(interaction, serverConfig);
-            } else if (interaction.customId === 'config_leaderboard_roles_clear_all') {
-                await this.showClearAllLeaderboardRolesConfirmation(interaction, serverConfig);
-            } else if (interaction.customId === 'config_leaderboard_roles_confirm_clear') {
-                await this.clearAllLeaderboardRoles(interaction, serverConfig);
-            } else if (interaction.customId === 'config_leaderboard_roles_cancel_clear') {
-                await this.showLeaderboardRolesConfig(interaction, serverConfig);
-            } else if (interaction.customId === 'config_leaderboard_roles_strategy_positive') {
-                await this.toggleLeaderboardRoleStrategy(interaction, serverConfig, 'positive');
-            } else if (interaction.customId === 'config_leaderboard_roles_strategy_negative') {
-                await this.toggleLeaderboardRoleStrategy(interaction, serverConfig, 'negative');
-            }
-            
-            // Handle reaction config select menus (non-modal interactions)
-            else if (interaction.customId === 'config_reaction_remove_select') {
-                const reactionId = interaction.values[0];
-                await this.removeReaction(interaction, serverConfig, reactionId);
-            } else if (interaction.customId === 'config_leaderboard_role_remove_select') {
-                const [position, roleId, leaderboardType] = interaction.values[0].split(':');
-                await this.removeLeaderboardRole(interaction, serverConfig, position, roleId, leaderboardType);
-                return;
-            }
-            
-            // Handle blocked channels select menus (non-modal interactions)
-            else if (interaction.customId === 'config_blocked_channels_remove_select') {
-                const channelId = interaction.values[0];
-                await this.removeBlockedChannel(interaction, serverConfig, channelId);
-            }
-            
+            await this.routeConfigInteraction(interaction, serverConfig, serverId);
         } catch (error) {
             logger.errorWithStack('Error handling config interaction', error, 'CONFIG');
             await this.updateInteraction(interaction, {
@@ -1337,6 +919,1016 @@ module.exports = {
                 components: []
             });
         }
+    },
+
+    /**
+     * Handle interactions that trigger modals (these need early returns without defer)
+     * @param {Object} interaction - Discord interaction object
+     * @param {Object} serverConfig - Current server configuration
+     * @returns {boolean} - Whether a modal was triggered
+     */
+    async handleModalTriggeringInteractions(interaction, serverConfig) {
+        // Handle select menu 'custom' value interactions
+        if (interaction.isStringSelectMenu() && interaction.values && interaction.values[0] === 'custom') {
+            const customModalHandlers = {
+                'config_threshold_select': () => this.showCustomThresholdModal(interaction),
+                'config_timeout_select': () => this.showCustomTimeoutModal(interaction),
+                'config_cooldown_select': () => this.showCustomCooldownModal(interaction),
+                'config_color_select': () => this.showCustomColorModal(interaction),
+                'config_point_range_select': () => this.showCustomPointRangeModal(interaction),
+                'config_daily_limit_select': () => this.showCustomDailyLimitModal(interaction),
+                'config_min_vote_magnitude_select': () => this.showCustomMinVoteMagnitudeModal(interaction),
+                'config_log_channel_select': () => this.showCustomLogChannelModal(interaction),
+                'config_formula_base_select': () => this.showCustomFormulaBaseModal(interaction),
+                'config_formula_multiplier_select': () => this.showCustomFormulaMultiplierModal(interaction)
+            };
+
+            const handler = customModalHandlers[interaction.customId];
+            if (handler) {
+                await handler();
+                return true;
+            }
+        }
+
+        // Handle button interactions that trigger modals
+        if (interaction.isButton()) {
+            const buttonModalHandlers = {
+                'config_autoroles_add': () => this.showAddAutoRoleModal(interaction),
+                'config_reactions_add': () => this.startEmojiAddProcess(interaction),
+                'config_blocked_channels_add': () => this.startBlockedChannelAddProcess(interaction),
+                'config_leaderboard_roles_add_positive': () => this.showAddLeaderboardRoleModal(interaction, 'positive'),
+                'config_leaderboard_roles_add_negative': () => this.showAddLeaderboardRoleModal(interaction, 'negative')
+            };
+
+            const handler = buttonModalHandlers[interaction.customId];
+            if (handler) {
+                await handler();
+                return true;
+            }
+
+            // Handle autorole edit button with special logic
+            if (interaction.customId.startsWith('config_autorole_edit_select')) {
+                const [threshold, roleId] = interaction.values ? interaction.values[0].split(':') : [null, null];
+                if (threshold && roleId) {
+                    await this.showEditAutoRoleModal(interaction, threshold, roleId);
+                    return true;
+                }
+            }
+        }
+
+        // Handle select menu interactions that trigger modals
+        if (interaction.isStringSelectMenu()) {
+            const selectModalHandlers = {
+                'config_autorole_edit_select': () => {
+                    const [threshold, roleId] = interaction.values[0].split(':');
+                    return this.showEditAutoRoleModal(interaction, threshold, roleId);
+                },
+                'config_autorole_select_role': () => {
+                    const roleId = interaction.values[0];
+                    return this.showAutoRoleThresholdModal(interaction, roleId);
+                },
+                'config_leaderboard_role_edit_select': () => {
+                    const [position, roleId, leaderboardType] = interaction.values[0].split(':');
+                    return this.showEditLeaderboardRoleModal(interaction, position, roleId, leaderboardType);
+                },
+                'config_reaction_edit_select': () => {
+                    const emoji = interaction.values[0];
+                    return this.showEditReactionModal(interaction, serverConfig, emoji);
+                }
+            };
+
+            // Handle leaderboard role select with dynamic type extraction
+            if (interaction.customId.startsWith('config_leaderboard_role_select_role_')) {
+                const leaderboardType = interaction.customId.split('_').pop();
+                const roleId = interaction.values[0];
+                await this.showLeaderboardRolePositionModal(interaction, roleId, leaderboardType);
+                return true;
+            }
+
+            const handler = selectModalHandlers[interaction.customId];
+            if (handler) {
+                await handler();
+                return true;
+            }
+        }
+
+        return false; // No modal was triggered
+    },
+
+    /**
+     * Route config interactions to their appropriate handlers
+     * @param {Object} interaction - Discord interaction object
+     * @param {Object} serverConfig - Current server configuration
+     * @param {string} serverId - Guild/server ID
+     */
+    async routeConfigInteraction(interaction, serverConfig, serverId) {
+        // Navigation handlers
+        const navigationHandlers = {
+            'config_voting': () => this.showVotingConfig(interaction, serverConfig),
+            'config_points': () => this.showPointsConfig(interaction, serverConfig),
+            'config_appearance': () => this.showAppearanceConfig(interaction, serverConfig),
+            'config_advanced': () => this.showAdvancedConfig(interaction, serverConfig),
+            'config_autoroles': () => this.showAutoRolesConfig(interaction, serverConfig),
+            'config_reactions': () => this.showReactionConfig(interaction, serverConfig),
+            'config_leaderboard_roles': () => this.showLeaderboardRolesConfig(interaction, serverConfig),
+            'config_blocked_channels': () => this.showBlockedChannelsConfig(interaction, serverConfig),
+            'config_points_next': () => this.showAppearanceConfig(interaction, serverConfig),
+            'config_appearance_next': () => this.showAdvancedConfig(interaction, serverConfig),
+            'config_advanced_next': () => this.showAutoRolesConfig(interaction, serverConfig),
+            'config_autoroles_next': () => this.showVotingConfig(interaction, serverConfig)
+        };
+
+        // Handle refresh/main menu navigation with config reload
+        if (['config_refresh', 'config_back_main', 'config_main'].includes(interaction.customId)) {
+            const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+            await this.showMainConfigMenu(interaction, updatedConfig);
+            return;
+        }
+
+        // Check navigation handlers first
+        const navigationHandler = navigationHandlers[interaction.customId];
+        if (navigationHandler) {
+            await navigationHandler();
+            return;
+        }
+
+        // Handle configuration updates
+        await this.handleConfigurationUpdates(interaction, serverConfig, serverId);
+    },
+
+    /**
+     * Handle all configuration update interactions
+     * @param {Object} interaction - Discord interaction object
+     * @param {Object} serverConfig - Current server configuration
+     * @param {string} serverId - Guild/server ID
+     */
+    async handleConfigurationUpdates(interaction, serverConfig, serverId) {
+        const customId = interaction.customId;
+        const value = interaction.values ? interaction.values[0] : null;
+
+        // Simple configuration select handlers (update config and refresh view)
+        const simpleSelectHandlers = {
+            'config_threshold_select': {
+                condition: (val) => val !== 'custom',
+                update: (val) => ({ threshold: parseInt(val) }),
+                view: (config) => this.showVotingConfig(interaction, config)
+            },
+            'config_timeout_select': {
+                condition: (val) => val !== 'custom',
+                update: (val) => ({ voting_timeout: parseInt(val) }),
+                view: (config) => this.showVotingConfig(interaction, config)
+            },
+            'config_formula_base_select': {
+                condition: (val) => val !== 'custom',
+                update: (val) => ({ formula_base: parseInt(val) }),
+                view: (config) => this.showVotingConfig(interaction, config)
+            },
+            'config_formula_multiplier_select': {
+                condition: (val) => val !== 'custom',
+                update: (val) => ({ formula_multiplier: parseFloat(val) }),
+                view: (config) => this.showVotingConfig(interaction, config)
+            },
+            'config_point_range_select': {
+                condition: (val) => val !== 'custom',
+                update: (val) => {
+                    const range = parseInt(val);
+                    return { min_points_per_award: -range, max_points_per_award: range };
+                },
+                view: (config) => this.showPointsConfig(interaction, config)
+            },
+            'config_min_vote_magnitude_select': {
+                condition: (val) => val !== 'custom',
+                update: (val) => ({ min_vote_magnitude: parseInt(val) }),
+                view: (config) => this.showPointsConfig(interaction, config)
+            },
+            'config_cooldown_select': {
+                condition: (val) => val !== 'custom',
+                update: (val) => ({ user_cooldown_minutes: parseInt(val) }),
+                view: (config) => this.showPointsConfig(interaction, config)
+            },
+            'config_color_select': {
+                condition: (val) => val !== 'custom',
+                update: (val) => ({ embed_color: val }),
+                view: (config) => this.showAppearanceConfig(interaction, config)
+            }
+        };
+
+        // Handle simple select interactions
+        const simpleHandler = simpleSelectHandlers[customId];
+        if (simpleHandler && value && simpleHandler.condition(value)) {
+            await this.updateServerConfig(serverId, simpleHandler.update(value));
+            const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+            await simpleHandler.view(updatedConfig);
+            return;
+        }
+
+        // Handle special cases
+        await this.handleSpecialConfigurationCases(interaction, serverConfig, serverId, customId, value);
+    },
+
+    /**
+     * Handle special configuration cases that need custom logic
+     * @param {Object} interaction - Discord interaction object
+     * @param {Object} serverConfig - Current server configuration
+     * @param {string} serverId - Guild/server ID
+     * @param {string} customId - Interaction custom ID
+     * @param {string|null} value - Selected value (if select menu)
+     */
+    async handleSpecialConfigurationCases(interaction, serverConfig, serverId, customId, value) {
+        // Toggle handlers with logging
+        const toggleHandlers = {
+            'config_threshold_mode_toggle': async () => {
+                const newMode = serverConfig.threshold_mode === 'formula' ? 'fixed' : 'formula';
+                await this.updateServerConfig(serverId, { threshold_mode: newMode });
+                await this.logConfigChange(interaction, 'Threshold Mode', serverConfig.threshold_mode, newMode);
+                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                await this.showVotingConfig(interaction, updatedConfig);
+            },
+            'config_reaction_mode_toggle': async () => {
+                const newValue = !serverConfig.reaction_mode;
+                await this.updateServerConfig(serverId, { reaction_mode: newValue });
+                await this.logConfigChange(interaction, 'Reaction Mode', 
+                    serverConfig.reaction_mode ? 'Enabled' : 'Disabled',
+                    newValue ? 'Enabled' : 'Disabled'
+                );
+                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                await this.showVotingConfig(interaction, updatedConfig);
+            },
+            'config_auto_approval_toggle': async () => {
+                const newValue = serverConfig.auto_approval === false ? true : false;
+                await this.updateServerConfig(serverId, { auto_approval: newValue });
+                await this.logConfigChange(interaction, 'Auto-Approval', 
+                    serverConfig.auto_approval !== false ? 'Enabled' : 'Disabled',
+                    newValue ? 'Enabled' : 'Disabled'
+                );
+                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                await this.showVotingConfig(interaction, updatedConfig);
+            },
+            'config_bot_status_toggle': async () => {
+                const currentStatus = serverConfig.is_active;
+                const newStatus = !currentStatus;
+                await this.updateServerConfig(serverId, { is_active: newStatus });
+                await this.logConfigChange(interaction, 'Bot Status', 
+                    currentStatus ? 'Active' : 'Inactive', 
+                    newStatus ? 'Active' : 'Inactive'
+                );
+                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                await this.showAdvancedConfig(interaction, updatedConfig);
+            },
+            'config_success_feedback_toggle': async () => {
+                await this.updateServerConfig(serverId, { success_feedback: !serverConfig.success_feedback });
+                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                await this.showAdvancedConfig(interaction, updatedConfig);
+            },
+            'config_failed_feedback_toggle': async () => {
+                await this.updateServerConfig(serverId, { failed_feedback: !serverConfig.failed_feedback });
+                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                await this.showAdvancedConfig(interaction, updatedConfig);
+            }
+        };
+
+        const toggleHandler = toggleHandlers[customId];
+        if (toggleHandler) {
+            await toggleHandler();
+            return;
+        }
+
+        // Handle special select cases
+        await this.handleSpecialSelectCases(interaction, serverConfig, serverId, customId, value);
+    },
+
+    /**
+     * Handle special select menu cases with custom logic
+     * @param {Object} interaction - Discord interaction object
+     * @param {Object} serverConfig - Current server configuration
+     * @param {string} serverId - Guild/server ID
+     * @param {string} customId - Interaction custom ID
+     * @param {string|null} value - Selected value
+     */
+    async handleSpecialSelectCases(interaction, serverConfig, serverId, customId, value) {
+        // Complex select handlers
+        const complexSelectHandlers = {
+            'config_threshold_mode_select': async () => {
+                await this.updateServerConfig(serverId, { threshold_mode: value });
+                await this.logConfigChange(interaction, 'Threshold Mode', 
+                    serverConfig.threshold_mode === 'fixed' ? 'Fixed' : 'Formula-based', 
+                    value === 'fixed' ? 'Fixed' : 'Formula-based'
+                );
+                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                await this.showVotingConfig(interaction, updatedConfig);
+            },
+            'config_daily_limit_select': async () => {
+                if (value !== 'custom') {
+                    const limitToSet = value === 'none' ? null : parseInt(value);
+                    await this.updateServerConfig(serverId, { daily_point_limit: limitToSet });
+                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                    await this.showPointsConfig(interaction, updatedConfig);
+                }
+            },
+            'config_log_channel_select': async () => {
+                if (value !== 'custom') {
+                    let channelId = null;
+                    if (value === 'current') {
+                        channelId = interaction.channel.id;
+                    } else if (value !== 'none') {
+                        channelId = value;
+                    }
+                    await this.updateServerConfig(serverId, { log_channel: channelId });
+                    const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+                    await this.showAdvancedConfig(interaction, updatedConfig);
+                }
+            }
+        };
+
+        const complexHandler = complexSelectHandlers[customId];
+        if (complexHandler) {
+            await complexHandler();
+            return;
+        }
+
+        // Handle all other remaining interactions
+        await this.handleRemainingInteractions(interaction, serverConfig, serverId, customId, value);
+    },
+
+    /**
+     * Handle all remaining configuration interactions
+     * @param {Object} interaction - Discord interaction object
+     * @param {Object} serverConfig - Current server configuration
+     * @param {string} serverId - Guild/server ID
+     * @param {string} customId - Interaction custom ID
+     * @param {string|null} value - Selected value
+     */
+    async handleRemainingInteractions(interaction, serverConfig, serverId, customId, value) {
+        // Define all remaining interaction handlers
+        const handlers = {
+            // Reaction configuration
+            'config_reactions_edit': () => this.showEditReactionSelect(interaction, serverConfig),
+            'config_reactions_remove': () => this.showRemoveReactionSelect(interaction, serverConfig),
+            'config_reactions_defaults': () => this.showDefaultReactionsPreview(interaction, serverConfig),
+            'config_reactions_confirm_defaults': () => this.setupDefaultReactions(interaction, serverConfig),
+            'config_reactions_cancel_defaults': () => this.showReactionConfig(interaction, serverConfig),
+            'config_reactions_cancel_add': () => this.handleEmojiAddCancel(interaction),
+            'config_reactions_clear': () => this.showClearAllReactionsConfirmation(interaction, serverConfig),
+            'config_reactions_confirm_clear': () => this.clearAllReactions(interaction, serverConfig),
+            'config_reactions_cancel_clear': () => this.showReactionConfig(interaction, serverConfig),
+
+            // Blocked channels configuration
+            'config_blocked_channels_remove': () => this.showRemoveBlockedChannelSelect(interaction, serverConfig),
+            'config_blocked_channels_clear': () => this.showClearAllBlockedChannelsConfirmation(interaction, serverConfig),
+            'config_blocked_channels_clear_confirm': () => this.clearAllBlockedChannels(interaction, serverConfig),
+            'config_blocked_channels_cancel_clear': () => this.showBlockedChannelsConfig(interaction, serverConfig),
+            'config_blocked_channels_cancel_add': () => this.showBlockedChannelsConfig(interaction, serverConfig),
+
+            // Auto roles configuration
+            'config_autoroles_edit': () => this.showEditAutoRoleSelect(interaction, serverConfig),
+            'config_autoroles_remove': () => this.showRemoveAutoRoleSelect(interaction, serverConfig),
+            'config_autoroles_test': () => this.showAutoRoleTestResults(interaction, serverConfig),
+            'config_autoroles_clear_all': () => this.showClearAllAutoRolesConfirmation(interaction, serverConfig),
+            'config_autoroles_confirm_clear': () => this.clearAllAutoRoles(interaction, serverConfig),
+            'config_autoroles_cancel_clear': () => this.showAutoRolesConfig(interaction, serverConfig),
+
+            // Leaderboard roles configuration
+            'config_leaderboard_roles_edit': () => this.showEditLeaderboardRoleSelect(interaction, serverConfig),
+            'config_leaderboard_roles_remove': () => this.showRemoveLeaderboardRoleSelect(interaction, serverConfig),
+            'config_leaderboard_roles_test': () => this.showLeaderboardRoleTestResults(interaction, serverConfig),
+            'config_leaderboard_roles_clear_all': () => this.showClearAllLeaderboardRolesConfirmation(interaction, serverConfig),
+            'config_leaderboard_roles_confirm_clear': () => this.clearAllLeaderboardRoles(interaction, serverConfig),
+            'config_leaderboard_roles_cancel_clear': () => this.showLeaderboardRolesConfig(interaction, serverConfig),
+            'config_leaderboard_roles_strategy_positive': () => this.toggleLeaderboardRoleStrategy(interaction, serverConfig, 'positive'),
+            'config_leaderboard_roles_strategy_negative': () => this.toggleLeaderboardRoleStrategy(interaction, serverConfig, 'negative'),
+
+            // Select menu handlers with value processing
+            'config_autorole_remove_select': () => {
+                const [threshold, roleId] = value.split(':');
+                return this.removeAutoRole(interaction, serverConfig, threshold, roleId);
+            },
+            'config_reaction_remove_select': () => this.removeReaction(interaction, serverConfig, value),
+            'config_leaderboard_role_remove_select': () => {
+                const [position, roleId, leaderboardType] = value.split(':');
+                return this.removeLeaderboardRole(interaction, serverConfig, position, roleId, leaderboardType);
+            },
+            'config_blocked_channels_remove_select': () => this.removeBlockedChannel(interaction, serverConfig, value)
+        };
+
+        const handler = handlers[customId];
+        if (handler) {
+            await handler();
+        }
+    },
+
+    async handleThresholdModal(interaction, serverId) {
+        const thresholdValue = interaction.fields.getTextInputValue('threshold_input');
+        const threshold = parseInt(thresholdValue);
+        
+        // Validate threshold
+        if (isNaN(threshold) || threshold < 1 || threshold > 50) {
+            await interaction.followUp({
+                content: '❌ Invalid threshold value. Please enter a number between 1 and 50.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Update config and show updated menu
+        await this.updateServerConfig(serverId, { threshold });
+        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Update the original message directly (no ephemeral confirmation)
+        await this.showVotingConfig(interaction, updatedConfig);
+    },
+
+    async handleTimeoutModal(interaction, serverId) {
+        const timeoutValue = interaction.fields.getTextInputValue('timeout_input');
+        const timeout = parseInt(timeoutValue);
+        
+        // Validate timeout
+        if (isNaN(timeout) || timeout < 1 || timeout > 1440) {
+            await interaction.followUp({
+                content: '❌ Invalid timeout value. Please enter a number between 1 and 1440 minutes.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Update config and show updated menu
+        await this.updateServerConfig(serverId, { voting_timeout: timeout });
+        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Update the original message directly (no ephemeral confirmation)
+        await this.showVotingConfig(interaction, updatedConfig);
+    },
+
+    async handleCooldownModal(interaction, serverId) {
+        const cooldownValue = interaction.fields.getTextInputValue('cooldown_input');
+        const cooldown = parseInt(cooldownValue);
+        
+        // Validate cooldown
+        if (isNaN(cooldown) || cooldown < 0 || cooldown > 1440) {
+            await interaction.followUp({
+                content: '❌ Invalid cooldown value. Please enter a number between 0 and 1440 minutes.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Update config and show updated menu
+        await this.updateServerConfig(serverId, { user_cooldown_minutes: cooldown });
+        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Update the original message directly (no ephemeral confirmation)
+        await this.showPointsConfig(interaction, updatedConfig);
+    },
+
+    async handleColorModal(interaction, serverId) {
+        const colorValue = interaction.fields.getTextInputValue('color_input').trim();
+        
+        // Validate hex color
+        const hexColorRegex = /^#?([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
+        if (!hexColorRegex.test(colorValue)) {
+            await interaction.followUp({
+                content: '❌ Invalid color format. Please enter a valid hex color (e.g., #ff0000, #00ff00, or fff).',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Ensure color starts with #
+        const formattedColor = colorValue.startsWith('#') ? colorValue : `#${colorValue}`;
+        
+        // Update config and show updated menu
+        await this.updateServerConfig(serverId, { embed_color: formattedColor });
+        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Update the original message directly (no ephemeral confirmation)
+        await this.showAppearanceConfig(interaction, updatedConfig);
+    },
+
+    async handlePointRangeModal(interaction, serverId) {
+        const minValue = interaction.fields.getTextInputValue('min_points_input');
+        const maxValue = interaction.fields.getTextInputValue('max_points_input');
+        const minPoints = parseInt(minValue);
+        const maxPoints = parseInt(maxValue);
+        
+        // Validate point range
+        if (isNaN(minPoints) || isNaN(maxPoints) || minPoints >= 0 || maxPoints <= 0 || minPoints >= maxPoints) {
+            await interaction.followUp({
+                content: '❌ Invalid point range. Minimum must be negative, maximum must be positive, and min < max.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Update config and show updated menu
+        await this.updateServerConfig(serverId, { 
+            min_points_per_award: minPoints, 
+            max_points_per_award: maxPoints 
+        });
+        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Update the original message directly (no ephemeral confirmation)
+        await this.showPointsConfig(interaction, updatedConfig);
+    },
+
+    async handleDailyLimitModal(interaction, serverId) {
+        const limitValue = interaction.fields.getTextInputValue('daily_limit_input');
+        const dailyLimit = parseInt(limitValue);
+        
+        // Validate daily limit
+        if (isNaN(dailyLimit) || dailyLimit < 0) {
+            await interaction.followUp({
+                content: '❌ Invalid daily limit. Please enter a positive number or 0 for no limit.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Update config and show updated menu
+        const limitToSet = dailyLimit === 0 ? null : dailyLimit;
+        await this.updateServerConfig(serverId, { daily_point_limit: limitToSet });
+        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Update the original message directly (no ephemeral confirmation)
+        await this.showPointsConfig(interaction, updatedConfig);
+    },
+
+    async handleMinVoteMagnitudeModal(interaction, serverId) {
+        const magnitudeValue = interaction.fields.getTextInputValue('min_vote_magnitude_input');
+        const magnitude = parseInt(magnitudeValue);
+        
+        // Get current server config for validation
+        const currentConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Validate minimum vote magnitude
+        if (isNaN(magnitude) || magnitude < 1) {
+            await interaction.followUp({
+                content: '❌ Invalid minimum vote magnitude. Please enter a positive number (minimum 1).',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Ensure it doesn't exceed the maximum points per award limit
+        if (magnitude > currentConfig.max_points_per_award) {
+            await interaction.followUp({
+                content: `❌ Minimum vote magnitude (${magnitude}) cannot exceed the maximum points per award (${currentConfig.max_points_per_award}). Please enter a value between 1 and ${currentConfig.max_points_per_award}.`,
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Additional validation: ensure it's reasonable (not exceeding absolute value of min_points_per_award)
+        const maxAllowedMagnitude = Math.max(
+            currentConfig.max_points_per_award,
+            Math.abs(currentConfig.min_points_per_award)
+        );
+        
+        if (magnitude > maxAllowedMagnitude) {
+            await interaction.followUp({
+                content: `❌ Minimum vote magnitude (${magnitude}) cannot exceed the point range limits (±${maxAllowedMagnitude}). Please enter a value between 1 and ${maxAllowedMagnitude}.`,
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Update config and show updated menu
+        await this.updateServerConfig(serverId, { min_vote_magnitude: magnitude });
+        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Update the original message directly (no ephemeral confirmation)
+        await this.showPointsConfig(interaction, updatedConfig);
+    },
+
+    async handleLogChannelModal(interaction, serverId) {
+        const channelValue = interaction.fields.getTextInputValue('log_channel_input');
+        
+        // Validate channel ID (Discord snowflake format)
+        const channelIdRegex = /^\d{17,20}$/;
+        if (!channelIdRegex.test(channelValue)) {
+            await interaction.followUp({
+                content: '❌ Invalid channel ID format. Please enter a valid Discord channel ID (17-20 digits).',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Update config and show updated menu
+        await this.updateServerConfig(serverId, { log_channel: channelValue });
+        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Update the original message directly (no ephemeral confirmation)
+        await this.showAdvancedConfig(interaction, updatedConfig);
+    },
+
+    async handleFormulaBaseModal(interaction, serverId) {
+        const baseValue = interaction.fields.getTextInputValue('formula_base_input');
+        const base = parseInt(baseValue);
+        
+        // Validate formula base
+        if (isNaN(base) || base < 1 || base > 20) {
+            await interaction.followUp({
+                content: '❌ Invalid formula base value. Please enter a number between 1 and 20.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Update config and show updated menu
+        await this.updateServerConfig(serverId, { formula_base: base });
+        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Update the original message directly (no ephemeral confirmation)
+        await this.showVotingConfig(interaction, updatedConfig);
+    },
+
+    async handleFormulaMultiplierModal(interaction, serverId) {
+        const multiplierValue = interaction.fields.getTextInputValue('formula_multiplier_input');
+        const multiplier = parseFloat(multiplierValue);
+        
+        // Validate formula multiplier
+        if (isNaN(multiplier) || multiplier < 0.1 || multiplier > 5.0) {
+            await interaction.followUp({
+                content: '❌ Invalid formula multiplier value. Please enter a number between 0.1 and 5.0.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Update config and show updated menu
+        await this.updateServerConfig(serverId, { formula_multiplier: multiplier });
+        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Update the original message directly (no ephemeral confirmation)
+        await this.showVotingConfig(interaction, updatedConfig);
+    },
+
+    async handleAddAutoRoleModal(interaction, serverId) {
+        const thresholdValue = interaction.fields.getTextInputValue('autorole_threshold_input');
+        const roleIdValue = interaction.fields.getTextInputValue('autorole_role_id_input').trim();
+        const threshold = parseInt(thresholdValue);
+        
+        // Get server config first
+        const serverConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Validate threshold
+        if (isNaN(threshold) || threshold < 1 || threshold > 999999) {
+            await interaction.followUp({
+                content: '❌ Invalid threshold value. Please enter a number between 1 and 999,999.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Check if role exists in the guild
+        const role = interaction.guild.roles.cache.get(roleIdValue);
+        if (!role) {
+            await interaction.followUp({
+                content: '❌ Role not found in this server. Please try again.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Check if threshold already exists
+        const currentAutoRoles = serverConfig.auto_role_thresholds || {};
+        if (currentAutoRoles[threshold]) {
+            await interaction.followUp({
+                content: `❌ A role is already configured for ${threshold} points. Please use a different threshold or edit the existing one.`,
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Verify the bot can still assign this role
+        const assignableRoles = this.getAssignableRoles(interaction.guild);
+        const canAssign = assignableRoles.some(r => r.id === roleIdValue);
+        if (!canAssign) {
+            await interaction.followUp({
+                content: '❌ This role cannot be assigned by the bot. It may be above the bot\'s highest role or managed by another integration.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Add the new auto role
+        const updatedAutoRoles = { ...currentAutoRoles, [threshold]: roleIdValue };
+        await this.updateServerConfig(serverId, { auto_role_thresholds: updatedAutoRoles });
+        
+        // Log the configuration change
+        await this.logConfigChange(interaction, 'Auto Roles', 
+            `Added role configuration`, 
+            `${threshold} points → @${role.name}`
+        );
+        
+        // Show success message and return to auto roles config
+        const embed = new EmbedBuilder()
+            .setColor('#00ff00')
+            .setTitle('✅ Auto Role Added')
+            .setDescription(`Successfully configured auto role:\n\n**${threshold} points → @${role.name}**`)
+            .setFooter({ text: 'Users will automatically receive this role when they reach the threshold.' });
+
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('config_autoroles')
+                    .setLabel('← Back to Auto Roles')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        // Use editReply since interaction was deferred
+        await interaction.editReply({ embeds: [embed], components: [row] });
+    },
+
+    async handleEditAutoRoleModal(interaction, serverId) {
+        const thresholdValue = interaction.fields.getTextInputValue('autorole_edit_threshold_input');
+        const oldThreshold = interaction.fields.getTextInputValue('autorole_old_threshold_input');
+        const roleId = interaction.fields.getTextInputValue('autorole_edit_role_input');
+        const newThreshold = parseInt(thresholdValue);
+        
+        // Get server config first
+        const serverConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Validate new threshold
+        if (isNaN(newThreshold) || newThreshold < 1 || newThreshold > 999999) {
+            await interaction.followUp({
+                content: '❌ Invalid threshold value. Please enter a number between 1 and 999,999.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Check if new threshold already exists (and it's different from the old one)
+        const currentAutoRoles = serverConfig.auto_role_thresholds || {};
+        if (currentAutoRoles[newThreshold] && newThreshold.toString() !== oldThreshold) {
+            await interaction.followUp({
+                content: `❌ A role is already configured for ${newThreshold} points. Please use a different threshold.`,
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Update the auto role threshold
+        const updatedAutoRoles = { ...currentAutoRoles };
+        delete updatedAutoRoles[oldThreshold]; // Remove old threshold
+        updatedAutoRoles[newThreshold] = roleId; // Add new threshold
+        
+        await this.updateServerConfig(serverId, { auto_role_thresholds: updatedAutoRoles });
+        
+        // Log the configuration change
+        const role = interaction.guild.roles.cache.get(roleId);
+        await this.logConfigChange(interaction, 'Auto Roles', 
+            `${oldThreshold} points → @${role ? role.name : 'Unknown Role'}`, 
+            `${newThreshold} points → @${role ? role.name : 'Unknown Role'}`
+        );
+        
+        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+        await this.showAutoRolesConfig(interaction, updatedConfig);
+    },
+
+    async handleLegacyFormulaMultiplierModal(interaction, serverId) {
+        const multiplierValue = parseFloat(interaction.fields.getTextInputValue('formula_multiplier_input'));
+        if (isNaN(multiplierValue) || multiplierValue < 0.1 || multiplierValue > 10) {
+            await interaction.followUp({
+                content: '⚠️ Invalid multiplier value. Please enter a number between 0.1 and 10.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        await this.updateServerConfig(serverId, { formula_multiplier: multiplierValue });
+        await this.logConfigChange(interaction, 'formula_multiplier', 
+            await DatabaseUtils.getServerConfig(serverId).then(c => c.formula_multiplier),
+            multiplierValue
+        );
+        const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+        await this.showVotingConfig(interaction, updatedConfig);
+    },
+
+    async handleEditReactionModal(interaction, serverId) {
+        const emoji = interaction.fields.getTextInputValue('reaction_emoji_input');
+        const pointsValue = interaction.fields.getTextInputValue('reaction_edit_points_input').trim();
+        
+        // Validate point value
+        const points = parseInt(pointsValue.replace(/[^-\d]/g, ''));
+        if (isNaN(points) || points === 0) {
+            await interaction.followUp({
+                content: '❌ Invalid point value. Please enter a non-zero number (e.g., 5, -3, 100, -50).',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        try {
+            // Get the current reaction to show the old value in logs
+            const currentReaction = await DatabaseUtils.getCustomReaction(serverId, emoji);
+            const oldPoints = currentReaction ? currentReaction.point_value : 0;
+            
+            // Update the custom reaction using setCustomReaction (which does upsert)
+            await DatabaseUtils.setCustomReaction(serverId, emoji, points);
+            
+            // Log the configuration change
+            await this.logConfigChange(interaction, 'Reaction Voting', 
+                `${emoji} → ${oldPoints > 0 ? '+' : ''}${oldPoints} points`, 
+                `${emoji} → ${points > 0 ? '+' : ''}${points} points`
+            );
+            
+            // Show success message with updated reaction
+            const successEmbed = new EmbedBuilder()
+                .setColor('#00ff00')
+                .setTitle('✅ Reaction Updated')
+                .setDescription(`Successfully updated reaction point value:`)
+                .addFields([
+                    {
+                        name: 'Updated Reaction',
+                        value: `${emoji} → ${points > 0 ? '+' : ''}${points} points`,
+                        inline: false
+                    }
+                ])
+                .setFooter({ text: 'Users can now react with this emoji for the new point value.' });
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('config_reactions')
+                        .setLabel('← Back to Reactions')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            await interaction.followUp({ embeds: [successEmbed], components: [row] });
+            
+        } catch (error) {
+            logger.errorWithStack('Error updating custom reaction', error, 'MODAL');
+            await interaction.followUp({
+                content: '❌ Error updating custom reaction. Please try again.',
+                flags: MessageFlags.Ephemeral
+            });
+        }
+    },
+
+    async handleAddLeaderboardRoleModal(interaction, serverId) {
+        const leaderboardType = interaction.customId.split('_').pop();
+        const positionValue = interaction.fields.getTextInputValue('leaderboard_position_input');
+        const roleIdValue = interaction.fields.getTextInputValue('leaderboard_role_id_input').trim();
+        const position = parseInt(positionValue);
+        
+        // Get server config first
+        const serverConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Validate position
+        if (isNaN(position) || position < 1 || position > 10) {
+            await interaction.followUp({
+                content: '❌ Invalid position value. Please enter a number between 1 and 10.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Check if role exists in the guild (ensure roleIdValue is a string)
+        const roleIdString = String(roleIdValue);
+        const role = interaction.guild.roles.cache.get(roleIdString);
+        if (!role) {
+            await interaction.followUp({
+                content: '❌ Role not found in this server. Please try again.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Check if position already exists for this leaderboard type
+        const currentLeaderboardRoles = serverConfig.leaderboard_roles || {};
+        const currentTypeRoles = currentLeaderboardRoles[leaderboardType] || {};
+        if (currentTypeRoles[position]) {
+            await interaction.followUp({
+                content: `❌ A role is already configured for ${position}${this.getPositionSuffix(position)} place in the ${leaderboardType} leaderboard. Please use a different position or edit the existing one.`,
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Verify the bot can still assign this role
+        const assignableRoles = this.getAssignableRoles(interaction.guild);
+        const canAssign = assignableRoles.some(r => String(r.id) === roleIdString);
+        if (!canAssign) {
+            await interaction.followUp({
+                content: '❌ This role cannot be assigned by the bot. It may be above the bot\'s highest role or managed by another integration.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Add the new leaderboard role to the correct type
+        const updatedLeaderboardRoles = { ...currentLeaderboardRoles };
+        if (!updatedLeaderboardRoles[leaderboardType]) {
+            updatedLeaderboardRoles[leaderboardType] = {};
+        }
+        updatedLeaderboardRoles[leaderboardType][position] = roleIdString;
+        await this.updateServerConfig(serverId, { leaderboard_roles: updatedLeaderboardRoles });
+        
+        // Apply the new role configuration immediately
+        try {
+            const results = await DatabaseUtils.assignLeaderboardRoles(serverId, interaction.guild);
+            console.log(`🎯 Applied leaderboard roles after config update: ${results.assigned} assigned, ${results.removed} removed`);
+        } catch (roleError) {
+            console.error('Error applying leaderboard roles after config update:', roleError);
+            // Don't fail the config update if role assignment fails
+        }
+        
+        // Log the configuration change
+        await this.logConfigChange(interaction, 'Leaderboard Roles', 
+            `Added ${leaderboardType} role configuration`, 
+            `${position}${this.getPositionSuffix(position)} place → @${role.name}`
+        );
+        
+        // Show success message and return to leaderboard roles config
+        const embed = new EmbedBuilder()
+            .setColor('#00ff00')
+            .setTitle(`✅ ${leaderboardType === 'positive' ? 'Positive' : 'Negative'} Leaderboard Role Added`)
+            .setDescription(`Successfully configured ${leaderboardType} leaderboard role:\n\n**${position}${this.getPositionSuffix(position)} place → @${role.name}**`)
+            .setFooter({ text: `Users will automatically receive this role when they reach this position on the ${leaderboardType} leaderboard.` });
+
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles')
+                    .setLabel('← Back to Leaderboard Roles')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        // Use editReply since interaction was deferred
+        await interaction.editReply({ embeds: [embed], components: [row] });
+    },
+
+    async handleEditLeaderboardRoleModal(interaction, serverId) {
+        const positionValue = interaction.fields.getTextInputValue('leaderboard_edit_position_input');
+        const oldPosition = interaction.fields.getTextInputValue('leaderboard_old_position_input');
+        const roleId = interaction.fields.getTextInputValue('leaderboard_edit_role_input');
+        const leaderboardType = interaction.fields.getTextInputValue('leaderboard_edit_type_input');
+        const newPosition = parseInt(positionValue);
+        
+        // Get server config first
+        const serverConfig = await DatabaseUtils.getServerConfig(serverId);
+        
+        // Validate new position
+        if (isNaN(newPosition) || newPosition < 1 || newPosition > 10) {
+            await interaction.followUp({
+                content: '❌ Invalid position value. Please enter a number between 1 and 10.',
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Check if new position already exists (and it's different from the old one)
+        const currentLeaderboardRoles = serverConfig.leaderboard_roles || {};
+        const currentTypeRoles = currentLeaderboardRoles[leaderboardType] || {};
+        if (currentTypeRoles[newPosition] && newPosition.toString() !== oldPosition) {
+            await interaction.followUp({
+                content: `❌ A role is already configured for ${newPosition}${this.getPositionSuffix(newPosition)} place in the ${leaderboardType} leaderboard. Please use a different position.`,
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+        
+        // Update the leaderboard role position
+        const updatedLeaderboardRoles = { ...currentLeaderboardRoles };
+        if (!updatedLeaderboardRoles[leaderboardType]) {
+            updatedLeaderboardRoles[leaderboardType] = {};
+        }
+        delete updatedLeaderboardRoles[leaderboardType][oldPosition]; // Remove old position
+        updatedLeaderboardRoles[leaderboardType][newPosition] = String(roleId); // Add new position as string
+        
+        await this.updateServerConfig(serverId, { leaderboard_roles: updatedLeaderboardRoles });
+        
+        // Apply the updated role configuration immediately
+        try {
+            const results = await DatabaseUtils.assignLeaderboardRoles(serverId, interaction.guild);
+            console.log(`🎯 Applied leaderboard roles after edit: ${results.assigned} assigned, ${results.removed} removed`);
+        } catch (roleError) {
+            console.error('Error applying leaderboard roles after edit:', roleError);
+            // Don't fail the config update if role assignment fails
+        }
+        
+        // Log the configuration change
+        const role = interaction.guild.roles.cache.get(roleId);
+        await this.logConfigChange(interaction, 'Leaderboard Roles', 
+            `${oldPosition}${this.getPositionSuffix(oldPosition)} place → @${role.name}`, 
+            `${newPosition}${this.getPositionSuffix(newPosition)} place → @${role.name}`
+        );
+        
+        // Show success message and return to leaderboard roles config
+        const embed = new EmbedBuilder()
+            .setColor('#00ff00')
+            .setTitle('✅ Leaderboard Role Updated')
+            .setDescription(`Successfully updated leaderboard role position:\n\n**${oldPosition}${this.getPositionSuffix(oldPosition)} place → ${newPosition}${this.getPositionSuffix(newPosition)} place → @${role.name}**`)
+            .setFooter({ text: 'Users will automatically receive this role when they reach this position on the leaderboard.' });
+
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('config_leaderboard_roles')
+                    .setLabel('← Back to Leaderboard Roles')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        // Use editReply since interaction was deferred
+        await interaction.editReply({ embeds: [embed], components: [row] });
     },
 
     async handleModalSubmit(interaction) {
@@ -1349,593 +1941,40 @@ module.exports = {
         await interaction.deferUpdate();
         
         try {
-            if (interaction.customId === 'config_custom_threshold_modal') {
-                const thresholdValue = interaction.fields.getTextInputValue('threshold_input');
-                const threshold = parseInt(thresholdValue);
-                
-                // Validate threshold
-                if (isNaN(threshold) || threshold < 1 || threshold > 50) {
-                    await interaction.followUp({
-                        content: '❌ Invalid threshold value. Please enter a number between 1 and 50.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Update config and show updated menu
-                await this.updateServerConfig(serverId, { threshold });
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                
-                // Update the original message directly (no ephemeral confirmation)
-                await this.showVotingConfig(interaction, updatedConfig);
-                
-            } else if (interaction.customId === 'config_custom_timeout_modal') {
-                const timeoutValue = interaction.fields.getTextInputValue('timeout_input');
-                const timeout = parseInt(timeoutValue);
-                
-                // Validate timeout
-                if (isNaN(timeout) || timeout < 1 || timeout > 1440) {
-                    await interaction.followUp({
-                        content: '❌ Invalid timeout value. Please enter a number between 1 and 1440 minutes.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Update config and show updated menu
-                await this.updateServerConfig(serverId, { voting_timeout: timeout });
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                
-                // Update the original message directly (no ephemeral confirmation)
-                await this.showVotingConfig(interaction, updatedConfig);
-                
-            } else if (interaction.customId === 'config_custom_cooldown_modal') {
-                const cooldownValue = interaction.fields.getTextInputValue('cooldown_input');
-                const cooldown = parseInt(cooldownValue);
-                
-                // Validate cooldown
-                if (isNaN(cooldown) || cooldown < 0 || cooldown > 1440) {
-                    await interaction.followUp({
-                        content: '❌ Invalid cooldown value. Please enter a number between 0 and 1440 minutes.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Update config and show updated menu
-                await this.updateServerConfig(serverId, { user_cooldown_minutes: cooldown });
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                
-                // Update the original message directly (no ephemeral confirmation)
-                await this.showPointsConfig(interaction, updatedConfig);
-                
-            } else if (interaction.customId === 'config_custom_color_modal') {
-                const colorValue = interaction.fields.getTextInputValue('color_input').trim();
-                
-                // Validate hex color
-                const hexColorRegex = /^#?([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
-                if (!hexColorRegex.test(colorValue)) {
-                    await interaction.followUp({
-                        content: '❌ Invalid color format. Please enter a valid hex color (e.g., #ff0000, #00ff00, or fff).',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Ensure color starts with #
-                const formattedColor = colorValue.startsWith('#') ? colorValue : `#${colorValue}`;
-                
-                // Update config and show updated menu
-                await this.updateServerConfig(serverId, { embed_color: formattedColor });
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                
-                // Update the original message directly (no ephemeral confirmation)
-                await this.showAppearanceConfig(interaction, updatedConfig);
-                
-            } else if (interaction.customId === 'config_custom_point_range_modal') {
-                const minValue = interaction.fields.getTextInputValue('min_points_input');
-                const maxValue = interaction.fields.getTextInputValue('max_points_input');
-                const minPoints = parseInt(minValue);
-                const maxPoints = parseInt(maxValue);
-                
-                // Validate point range
-                if (isNaN(minPoints) || isNaN(maxPoints) || minPoints >= 0 || maxPoints <= 0 || minPoints >= maxPoints) {
-                    await interaction.followUp({
-                        content: '❌ Invalid point range. Minimum must be negative, maximum must be positive, and min < max.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Update config and show updated menu
-                await this.updateServerConfig(serverId, { 
-                    min_points_per_award: minPoints, 
-                    max_points_per_award: maxPoints 
+            // Handle special modal cases that use startsWith
+            if (interaction.customId.startsWith('config_add_leaderboard_role_position_modal_')) {
+                await this.handleAddLeaderboardRoleModal(interaction, serverId);
+                return;
+            }
+            
+            // Standard modal handlers
+            const modalHandlers = {
+                'config_custom_threshold_modal': () => this.handleThresholdModal(interaction, serverId),
+                'config_custom_timeout_modal': () => this.handleTimeoutModal(interaction, serverId),
+                'config_custom_cooldown_modal': () => this.handleCooldownModal(interaction, serverId),
+                'config_custom_color_modal': () => this.handleColorModal(interaction, serverId),
+                'config_custom_point_range_modal': () => this.handlePointRangeModal(interaction, serverId),
+                'config_custom_daily_limit_modal': () => this.handleDailyLimitModal(interaction, serverId),
+                'config_custom_min_vote_magnitude_modal': () => this.handleMinVoteMagnitudeModal(interaction, serverId),
+                'config_custom_log_channel_modal': () => this.handleLogChannelModal(interaction, serverId),
+                'config_custom_formula_base_modal': () => this.handleFormulaBaseModal(interaction, serverId),
+                'config_custom_formula_multiplier_modal': () => this.handleFormulaMultiplierModal(interaction, serverId),
+                'config_add_autorole_threshold_modal': () => this.handleAddAutoRoleModal(interaction, serverId),
+                'config_edit_autorole_modal': () => this.handleEditAutoRoleModal(interaction, serverId),
+                'config_formula_multiplier_modal': () => this.handleLegacyFormulaMultiplierModal(interaction, serverId),
+                'config_edit_reaction_modal': () => this.handleEditReactionModal(interaction, serverId),
+                'config_edit_leaderboard_role_modal': () => this.handleEditLeaderboardRoleModal(interaction, serverId)
+            };
+
+            const handler = modalHandlers[interaction.customId];
+            if (handler) {
+                await handler();
+            } else {
+                logger.warn(`Unknown modal interaction: ${interaction.customId}`, 'MODAL');
+                await interaction.followUp({
+                    content: '❌ Unknown modal interaction. Please try again.',
+                    flags: MessageFlags.Ephemeral
                 });
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                
-                // Update the original message directly (no ephemeral confirmation)
-                await this.showPointsConfig(interaction, updatedConfig);
-                
-            } else if (interaction.customId === 'config_custom_daily_limit_modal') {
-                const limitValue = interaction.fields.getTextInputValue('daily_limit_input');
-                const dailyLimit = parseInt(limitValue);
-                
-                // Validate daily limit
-                if (isNaN(dailyLimit) || dailyLimit < 0) {
-                    await interaction.followUp({
-                        content: '❌ Invalid daily limit. Please enter a positive number or 0 for no limit.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Update config and show updated menu
-                const limitToSet = dailyLimit === 0 ? null : dailyLimit;
-                await this.updateServerConfig(serverId, { daily_point_limit: limitToSet });
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                
-                // Update the original message directly (no ephemeral confirmation)
-                await this.showPointsConfig(interaction, updatedConfig);
-                
-            } else if (interaction.customId === 'config_custom_min_vote_magnitude_modal') {
-                const magnitudeValue = interaction.fields.getTextInputValue('min_vote_magnitude_input');
-                const magnitude = parseInt(magnitudeValue);
-                
-                // Get current server config for validation
-                const currentConfig = await DatabaseUtils.getServerConfig(serverId);
-                
-                // Validate minimum vote magnitude
-                if (isNaN(magnitude) || magnitude < 1) {
-                    await interaction.followUp({
-                        content: '❌ Invalid minimum vote magnitude. Please enter a positive number (minimum 1).',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Ensure it doesn't exceed the maximum points per award limit
-                if (magnitude > currentConfig.max_points_per_award) {
-                    await interaction.followUp({
-                        content: `❌ Minimum vote magnitude (${magnitude}) cannot exceed the maximum points per award (${currentConfig.max_points_per_award}). Please enter a value between 1 and ${currentConfig.max_points_per_award}.`,
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Additional validation: ensure it's reasonable (not exceeding absolute value of min_points_per_award)
-                const maxAllowedMagnitude = Math.max(
-                    currentConfig.max_points_per_award,
-                    Math.abs(currentConfig.min_points_per_award)
-                );
-                
-                if (magnitude > maxAllowedMagnitude) {
-                    await interaction.followUp({
-                        content: `❌ Minimum vote magnitude (${magnitude}) cannot exceed the point range limits (±${maxAllowedMagnitude}). Please enter a value between 1 and ${maxAllowedMagnitude}.`,
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Update config and show updated menu
-                await this.updateServerConfig(serverId, { min_vote_magnitude: magnitude });
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                
-                // Update the original message directly (no ephemeral confirmation)
-                await this.showPointsConfig(interaction, updatedConfig);
-                
-            } else if (interaction.customId === 'config_custom_log_channel_modal') {
-                const channelValue = interaction.fields.getTextInputValue('log_channel_input');
-                
-                // Validate channel ID (Discord snowflake format)
-                const channelIdRegex = /^\d{17,20}$/;
-                if (!channelIdRegex.test(channelValue)) {
-                    await interaction.followUp({
-                        content: '❌ Invalid channel ID format. Please enter a valid Discord channel ID (17-20 digits).',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Update config and show updated menu
-                await this.updateServerConfig(serverId, { log_channel: channelValue });
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                
-                // Update the original message directly (no ephemeral confirmation)
-                await this.showAdvancedConfig(interaction, updatedConfig);
-                
-            } else if (interaction.customId === 'config_custom_formula_base_modal') {
-                const baseValue = interaction.fields.getTextInputValue('formula_base_input');
-                const base = parseInt(baseValue);
-                
-                // Validate formula base
-                if (isNaN(base) || base < 1 || base > 20) {
-                    await interaction.followUp({
-                        content: '❌ Invalid formula base value. Please enter a number between 1 and 20.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Update config and show updated menu
-                await this.updateServerConfig(serverId, { formula_base: base });
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                
-                // Update the original message directly (no ephemeral confirmation)
-                await this.showVotingConfig(interaction, updatedConfig);
-                
-            } else if (interaction.customId === 'config_custom_formula_multiplier_modal') {
-                const multiplierValue = interaction.fields.getTextInputValue('formula_multiplier_input');
-                const multiplier = parseFloat(multiplierValue);
-                
-                // Validate formula multiplier
-                if (isNaN(multiplier) || multiplier < 0.1 || multiplier > 5.0) {
-                    await interaction.followUp({
-                        content: '❌ Invalid formula multiplier value. Please enter a number between 0.1 and 5.0.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Update config and show updated menu
-                await this.updateServerConfig(serverId, { formula_multiplier: multiplier });
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                
-                // Update the original message directly (no ephemeral confirmation)
-                await this.showVotingConfig(interaction, updatedConfig);
-            } else if (interaction.customId === 'config_add_autorole_threshold_modal') {
-                const thresholdValue = interaction.fields.getTextInputValue('autorole_threshold_input');
-                const roleIdValue = interaction.fields.getTextInputValue('autorole_role_id_input').trim();
-                const threshold = parseInt(thresholdValue);
-                
-                // Get server config first
-                const serverConfig = await DatabaseUtils.getServerConfig(serverId);
-                
-                // Validate threshold
-                if (isNaN(threshold) || threshold < 1 || threshold > 999999) {
-                    await interaction.followUp({
-                        content: '❌ Invalid threshold value. Please enter a number between 1 and 999,999.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Check if role exists in the guild
-                const role = interaction.guild.roles.cache.get(roleIdValue);
-                if (!role) {
-                    await interaction.followUp({
-                        content: '❌ Role not found in this server. Please try again.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Check if threshold already exists
-                const currentAutoRoles = serverConfig.auto_role_thresholds || {};
-                if (currentAutoRoles[threshold]) {
-                    await interaction.followUp({
-                        content: `❌ A role is already configured for ${threshold} points. Please use a different threshold or edit the existing one.`,
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Verify the bot can still assign this role
-                const assignableRoles = this.getAssignableRoles(interaction.guild);
-                const canAssign = assignableRoles.some(r => r.id === roleIdValue);
-                if (!canAssign) {
-                    await interaction.followUp({
-                        content: '❌ This role cannot be assigned by the bot. It may be above the bot\'s highest role or managed by another integration.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Add the new auto role
-                const updatedAutoRoles = { ...currentAutoRoles, [threshold]: roleIdValue };
-                await this.updateServerConfig(serverId, { auto_role_thresholds: updatedAutoRoles });
-                
-                // Log the configuration change
-                await this.logConfigChange(interaction, 'Auto Roles', 
-                    `Added role configuration`, 
-                    `${threshold} points → @${role.name}`
-                );
-                
-                // Show success message and return to auto roles config
-                const embed = new EmbedBuilder()
-                    .setColor('#00ff00')
-                    .setTitle('✅ Auto Role Added')
-                    .setDescription(`Successfully configured auto role:\n\n**${threshold} points → @${role.name}**`)
-                    .setFooter({ text: 'Users will automatically receive this role when they reach the threshold.' });
-
-                const row = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId('config_autoroles')
-                            .setLabel('← Back to Auto Roles')
-                            .setStyle(ButtonStyle.Primary)
-                    );
-
-                // Use editReply since interaction was deferred
-                await interaction.editReply({ embeds: [embed], components: [row] });
-                
-            } else if (interaction.customId === 'config_edit_autorole_modal') {
-                const thresholdValue = interaction.fields.getTextInputValue('autorole_edit_threshold_input');
-                const oldThreshold = interaction.fields.getTextInputValue('autorole_old_threshold_input');
-                const roleId = interaction.fields.getTextInputValue('autorole_edit_role_input');
-                const newThreshold = parseInt(thresholdValue);
-                
-                // Validate new threshold
-                if (isNaN(newThreshold) || newThreshold < 1 || newThreshold > 999999) {
-                    await interaction.followUp({
-                        content: '❌ Invalid threshold value. Please enter a number between 1 and 999,999.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Check if new threshold already exists (and it's different from the old one)
-                const currentAutoRoles = serverConfig.auto_role_thresholds || {};
-                if (currentAutoRoles[newThreshold] && newThreshold.toString() !== oldThreshold) {
-                    await interaction.followUp({
-                        content: `❌ A role is already configured for ${newThreshold} points. Please use a different threshold.`,
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Update the auto role threshold
-                const updatedAutoRoles = { ...currentAutoRoles };
-                delete updatedAutoRoles[oldThreshold]; // Remove old threshold
-                updatedAutoRoles[newThreshold] = roleId; // Add new threshold
-                
-                await this.updateServerConfig(serverId, { auto_role_thresholds: updatedAutoRoles });
-                
-                // Log the configuration change
-                const role = interaction.guild.roles.cache.get(roleId);
-                await this.logConfigChange(interaction, 'Auto Roles', 
-                    `${oldThreshold} points → @${role ? role.name : 'Unknown Role'}`, 
-                    `${newThreshold} points → @${role ? role.name : 'Unknown Role'}`
-                );
-                
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                await this.showAutoRolesConfig(interaction, updatedConfig);
-            } else if (interaction.customId === 'config_formula_multiplier_modal') {
-                const multiplierValue = parseFloat(interaction.fields.getTextInputValue('formula_multiplier_input'));
-                if (isNaN(multiplierValue) || multiplierValue < 0.1 || multiplierValue > 10) {
-                    await interaction.followUp({
-                        content: '⚠️ Invalid multiplier value. Please enter a number between 0.1 and 10.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                await this.updateServerConfig(serverId, { formula_multiplier: multiplierValue });
-                await this.logConfigChange(interaction, 'formula_multiplier', 
-                    await DatabaseUtils.getServerConfig(serverId).then(c => c.formula_multiplier),
-                    multiplierValue
-                );
-                const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
-                await this.showVotingConfig(interaction, updatedConfig);
-            } else if (interaction.customId === 'config_edit_reaction_modal') {
-                const emoji = interaction.fields.getTextInputValue('reaction_emoji_input');
-                const pointsValue = interaction.fields.getTextInputValue('reaction_edit_points_input').trim();
-                
-                // Validate point value
-                const points = parseInt(pointsValue.replace(/[^-\d]/g, ''));
-                if (isNaN(points) || points === 0) {
-                    await interaction.followUp({
-                        content: '❌ Invalid point value. Please enter a non-zero number (e.g., 5, -3, 100, -50).',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                try {
-                    // Get the current reaction to show the old value in logs
-                    const currentReaction = await DatabaseUtils.getCustomReaction(serverId, emoji);
-                    const oldPoints = currentReaction ? currentReaction.point_value : 0;
-                    
-                    // Update the custom reaction using setCustomReaction (which does upsert)
-                    await DatabaseUtils.setCustomReaction(serverId, emoji, points);
-                    
-                    // Log the configuration change
-                    await this.logConfigChange(interaction, 'Reaction Voting', 
-                        `${emoji} → ${oldPoints > 0 ? '+' : ''}${oldPoints} points`, 
-                        `${emoji} → ${points > 0 ? '+' : ''}${points} points`
-                    );
-                    
-                    // Show success message with updated reaction
-                    const successEmbed = new EmbedBuilder()
-                        .setColor('#00ff00')
-                        .setTitle('✅ Reaction Updated')
-                        .setDescription(`Successfully updated reaction point value:`)
-                        .addFields([
-                            {
-                                name: 'Updated Reaction',
-                                value: `${emoji} → ${points > 0 ? '+' : ''}${points} points`,
-                                inline: false
-                            }
-                        ])
-                        .setFooter({ text: 'Users can now react with this emoji for the new point value.' });
-
-                    const row = new ActionRowBuilder()
-                        .addComponents(
-                            new ButtonBuilder()
-                                .setCustomId('config_reactions')
-                                .setLabel('← Back to Reactions')
-                                .setStyle(ButtonStyle.Primary)
-                        );
-
-                    await interaction.followUp({ embeds: [successEmbed], components: [row] });
-                    
-                } catch (error) {
-                    logger.errorWithStack('Error updating custom reaction', error, 'MODAL');
-                    await interaction.followUp({
-                        content: '❌ Error updating custom reaction. Please try again.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                }
-            } else if (interaction.customId.startsWith('config_add_leaderboard_role_position_modal_')) {
-                const leaderboardType = interaction.customId.split('_').pop();
-                const positionValue = interaction.fields.getTextInputValue('leaderboard_position_input');
-                const roleIdValue = interaction.fields.getTextInputValue('leaderboard_role_id_input').trim();
-                const position = parseInt(positionValue);
-                
-                // Get server config first
-                const serverConfig = await DatabaseUtils.getServerConfig(serverId);
-                
-                // Validate position
-                if (isNaN(position) || position < 1 || position > 10) {
-                    await interaction.followUp({
-                        content: '❌ Invalid position value. Please enter a number between 1 and 10.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Check if role exists in the guild (ensure roleIdValue is a string)
-                const roleIdString = String(roleIdValue);
-                const role = interaction.guild.roles.cache.get(roleIdString);
-                if (!role) {
-                    await interaction.followUp({
-                        content: '❌ Role not found in this server. Please try again.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Check if position already exists for this leaderboard type
-                const currentLeaderboardRoles = serverConfig.leaderboard_roles || {};
-                const currentTypeRoles = currentLeaderboardRoles[leaderboardType] || {};
-                if (currentTypeRoles[position]) {
-                    await interaction.followUp({
-                        content: `❌ A role is already configured for ${position}${this.getPositionSuffix(position)} place in the ${leaderboardType} leaderboard. Please use a different position or edit the existing one.`,
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Verify the bot can still assign this role
-                const assignableRoles = this.getAssignableRoles(interaction.guild);
-                const canAssign = assignableRoles.some(r => String(r.id) === roleIdString);
-                if (!canAssign) {
-                    await interaction.followUp({
-                        content: '❌ This role cannot be assigned by the bot. It may be above the bot\'s highest role or managed by another integration.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Add the new leaderboard role to the correct type
-                const updatedLeaderboardRoles = { ...currentLeaderboardRoles };
-                if (!updatedLeaderboardRoles[leaderboardType]) {
-                    updatedLeaderboardRoles[leaderboardType] = {};
-                }
-                updatedLeaderboardRoles[leaderboardType][position] = roleIdString;
-                await this.updateServerConfig(serverId, { leaderboard_roles: updatedLeaderboardRoles });
-                
-                // Apply the new role configuration immediately
-                try {
-                    const results = await DatabaseUtils.assignLeaderboardRoles(serverId, interaction.guild);
-                    console.log(`🎯 Applied leaderboard roles after config update: ${results.assigned} assigned, ${results.removed} removed`);
-                } catch (roleError) {
-                    console.error('Error applying leaderboard roles after config update:', roleError);
-                    // Don't fail the config update if role assignment fails
-                }
-                
-                // Log the configuration change
-                await this.logConfigChange(interaction, 'Leaderboard Roles', 
-                    `Added ${leaderboardType} role configuration`, 
-                    `${position}${this.getPositionSuffix(position)} place → @${role.name}`
-                );
-                
-                // Show success message and return to leaderboard roles config
-                const embed = new EmbedBuilder()
-                    .setColor('#00ff00')
-                    .setTitle(`✅ ${leaderboardType === 'positive' ? 'Positive' : 'Negative'} Leaderboard Role Added`)
-                    .setDescription(`Successfully configured ${leaderboardType} leaderboard role:\n\n**${position}${this.getPositionSuffix(position)} place → @${role.name}**`)
-                    .setFooter({ text: `Users will automatically receive this role when they reach this position on the ${leaderboardType} leaderboard.` });
-
-                const row = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId('config_leaderboard_roles')
-                            .setLabel('← Back to Leaderboard Roles')
-                            .setStyle(ButtonStyle.Primary)
-                    );
-
-                // Use editReply since interaction was deferred
-                await interaction.editReply({ embeds: [embed], components: [row] });
-            } else if (interaction.customId === 'config_edit_leaderboard_role_modal') {
-                const positionValue = interaction.fields.getTextInputValue('leaderboard_edit_position_input');
-                const oldPosition = interaction.fields.getTextInputValue('leaderboard_old_position_input');
-                const roleId = interaction.fields.getTextInputValue('leaderboard_edit_role_input');
-                const leaderboardType = interaction.fields.getTextInputValue('leaderboard_edit_type_input');
-                const newPosition = parseInt(positionValue);
-                
-                // Validate new position
-                if (isNaN(newPosition) || newPosition < 1 || newPosition > 10) {
-                    await interaction.followUp({
-                        content: '❌ Invalid position value. Please enter a number between 1 and 10.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Check if new position already exists (and it's different from the old one)
-                const currentLeaderboardRoles = serverConfig.leaderboard_roles || {};
-                const currentTypeRoles = currentLeaderboardRoles[leaderboardType] || {};
-                if (currentTypeRoles[newPosition] && newPosition.toString() !== oldPosition) {
-                    await interaction.followUp({
-                        content: `❌ A role is already configured for ${newPosition}${this.getPositionSuffix(newPosition)} place in the ${leaderboardType} leaderboard. Please use a different position.`,
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return;
-                }
-                
-                // Update the leaderboard role position
-                const updatedLeaderboardRoles = { ...currentLeaderboardRoles };
-                if (!updatedLeaderboardRoles[leaderboardType]) {
-                    updatedLeaderboardRoles[leaderboardType] = {};
-                }
-                delete updatedLeaderboardRoles[leaderboardType][oldPosition]; // Remove old position
-                updatedLeaderboardRoles[leaderboardType][newPosition] = String(roleId); // Add new position as string
-                
-                await this.updateServerConfig(serverId, { leaderboard_roles: updatedLeaderboardRoles });
-                
-                // Apply the updated role configuration immediately
-                try {
-                    const results = await DatabaseUtils.assignLeaderboardRoles(serverId, interaction.guild);
-                    console.log(`🎯 Applied leaderboard roles after edit: ${results.assigned} assigned, ${results.removed} removed`);
-                } catch (roleError) {
-                    console.error('Error applying leaderboard roles after edit:', roleError);
-                    // Don't fail the config update if role assignment fails
-                }
-                
-                // Log the configuration change
-                const role = interaction.guild.roles.cache.get(roleId);
-                await this.logConfigChange(interaction, 'Leaderboard Roles', 
-                    `${oldPosition}${this.getPositionSuffix(oldPosition)} place → @${role.name}`, 
-                    `${newPosition}${this.getPositionSuffix(newPosition)} place → @${role.name}`
-                );
-                
-                // Show success message and return to leaderboard roles config
-                const embed = new EmbedBuilder()
-                    .setColor('#00ff00')
-                    .setTitle('✅ Leaderboard Role Updated')
-                    .setDescription(`Successfully updated leaderboard role position:\n\n**${oldPosition}${this.getPositionSuffix(oldPosition)} place → ${newPosition}${this.getPositionSuffix(newPosition)} place → @${role.name}**`)
-                    .setFooter({ text: 'Users will automatically receive this role when they reach this position on the leaderboard.' });
-
-                const row = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId('config_leaderboard_roles')
-                            .setLabel('← Back to Leaderboard Roles')
-                            .setStyle(ButtonStyle.Primary)
-                    );
-
-                // Use editReply since interaction was deferred
-                await interaction.editReply({ embeds: [embed], components: [row] });
             }
         } catch (error) {
             logger.errorWithStack('Error handling modal submit', error, 'MODAL');

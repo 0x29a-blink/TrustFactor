@@ -196,8 +196,10 @@ ${messageLink}`;
             }
             // --- end feedback ---
             
-            // Auto-approve the proposer's vote (they initiated it by reacting)
-            await DatabaseUtils.recordVote(pendingVote.id, user.id, 'approve');
+            // Auto-approve the proposer's vote if auto-approval is enabled (they initiated it by reacting)
+            if (serverConfig.auto_approval !== false) {
+                await DatabaseUtils.recordVote(pendingVote.id, user.id, 'approve');
+            }
             
             // Check if threshold is met (might be 1 vote needed)
             const voteCounts = await DatabaseUtils.getVoteCount(pendingVote.id);

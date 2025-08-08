@@ -130,7 +130,7 @@ async function handleUserReset(interaction, serverId) {
     // Check if user already has 0 points
     if (currentScore === 0) {
         return await interaction.reply({
-            content: `❌ ${targetUser.displayName} already has 0 points!`,
+            content: `❌ ${(targetUser.globalName || targetUser.username)} already has 0 points!`,
             flags: MessageFlags.Ephemeral
         });
     }
@@ -141,7 +141,7 @@ async function handleUserReset(interaction, serverId) {
     // Double-check that we're not applying a 0-point change
     if (resetPoints === 0) {
         return await interaction.reply({
-            content: `❌ Cannot reset ${targetUser.displayName}'s score - they already have 0 points!`,
+            content: `❌ Cannot reset ${(targetUser.globalName || targetUser.username)}'s score - they already have 0 points!`,
             flags: MessageFlags.Ephemeral
         });
     }
@@ -284,7 +284,7 @@ async function handleScoreSet(interaction, serverId) {
     // If no change was needed, inform the user
     if (result.point_change === 0) {
         return await interaction.reply({
-            content: `❌ ${targetUser.displayName} already has ${newScore} points!`,
+            content: `❌ ${(targetUser.globalName || targetUser.username)} already has ${newScore} points!`,
             flags: MessageFlags.Ephemeral
         });
     }
@@ -347,8 +347,8 @@ async function handleClearHistory(interaction, serverId) {
     const { error } = await supabase
         .from('score_history')
         .delete()
-        .eq('user_id', targetUser.id)
-        .eq('server_id', serverId);
+        .eq('user_id', String(targetUser.id))
+        .eq('server_id', String(serverId));
 
     if (error) {
         console.error('Error clearing score history:', error);
@@ -405,23 +405,23 @@ async function handleLeaderboardReset(interaction, serverId) {
     const { count: userCount } = await supabase
         .from('scores')
         .select('*', { count: 'exact', head: true })
-        .eq('server_id', serverId);
+        .eq('server_id', String(serverId));
 
     const { count: historyCount } = await supabase
         .from('score_history')
         .select('*', { count: 'exact', head: true })
-        .eq('server_id', serverId);
+        .eq('server_id', String(serverId));
 
     // Clear all scores and history for this server
     const { error: scoresError } = await supabase
         .from('scores')
         .delete()
-        .eq('server_id', serverId);
+        .eq('server_id', String(serverId));
 
     const { error: historyError } = await supabase
         .from('score_history')
         .delete()
-        .eq('server_id', serverId);
+        .eq('server_id', String(serverId));
 
     if (scoresError || historyError) {
         console.error('Error resetting leaderboard:', scoresError || historyError);
@@ -473,7 +473,7 @@ async function handleLeaderboardReset(interaction, serverId) {
 async function handleAssignLeaderboardRoles(interaction, serverId) {
     try {
         // Defer reply since this might take a moment
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         // Get server configuration to check if leaderboard roles are configured
         const serverConfig = await DatabaseUtils.getServerConfig(serverId);

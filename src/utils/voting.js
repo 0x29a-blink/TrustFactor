@@ -23,7 +23,8 @@ class VotingUtils {
         // Only handle thumbs up/down reactions
         if (!isApproval && !isRejection) return;
         
-        logger.debug(`Reaction: ${reaction.emoji.name}, isApproval: ${isApproval}, user: ${user.displayName}`, 'VOTE');
+        const userLabel = user.globalName || user.username;
+        logger.debug(`Reaction: ${reaction.emoji.name}, isApproval: ${isApproval}, user: ${userLabel}`, 'VOTE');
 
         try {
             // Get pending vote
@@ -66,7 +67,7 @@ class VotingUtils {
             const voteType = isApproval ? 'approve' : 'reject';
             await DatabaseUtils.recordVote(pendingVote.id, user.id, voteType);
             
-            logger.vote(`Recorded ${voteType} vote from ${user.displayName}`, 'REACTION');
+            logger.vote(`Recorded ${voteType} vote from ${userLabel}`, 'REACTION');
             
             // Get updated vote counts
             const voteCounts = await DatabaseUtils.getVoteCount(pendingVote.id);
@@ -106,7 +107,7 @@ class VotingUtils {
                 }
             } catch (dmError) {
                 // If DM fails, send a public reply in the channel tagging the user (if possible)
-                logger.debug(`Could not send DM feedback to ${user.displayName}: ${dmError.message}`, 'VOTE');
+                logger.debug(`Could not send DM feedback to ${userLabel}: ${dmError.message}`, 'VOTE');
                 try {
                     if (message.channel && message.channel.send) {
                         await message.channel.send({
@@ -134,7 +135,8 @@ class VotingUtils {
         const isApproval = reaction.emoji.name === '👍';
         const message = reaction.message;
         
-        logger.debug(`Reaction removed: ${reaction.emoji.name}, isApproval: ${isApproval}, user: ${user.displayName}`, 'VOTE');
+        const userLabel = user.globalName || user.username;
+        logger.debug(`Reaction removed: ${reaction.emoji.name}, isApproval: ${isApproval}, user: ${userLabel}`, 'VOTE');
         
         try {
             // Get pending vote
@@ -173,7 +175,7 @@ class VotingUtils {
             
             // Remove the vote
             await DatabaseUtils.removeVote(pendingVote.id, user.id);
-            logger.vote(`Retracted ${voteType} vote from ${user.displayName}`, 'REACTION');
+            logger.vote(`Retracted ${voteType} vote from ${userLabel}`, 'REACTION');
             
             // Get server config for threshold calculation
             const serverConfig = await DatabaseUtils.getServerConfig(pendingVote.server_id);
@@ -202,7 +204,7 @@ class VotingUtils {
                 }
             } catch (dmError) {
                 // If DM fails, we'll just log it
-                console.log(`Could not send DM feedback to ${user.displayName}: ${dmError.message}`);
+                logger.debug(`Could not send DM feedback to ${userLabel}: ${dmError.message}`, 'VOTE');
             }
             
         } catch (error) {
@@ -522,7 +524,7 @@ class VotingUtils {
             // Note: Success feedback is already handled above via the success embed
             // No need to call sendFeedbackMessage again as it would create duplicate messages
 
-            logger.vote(`Vote approved: ${targetUser.displayName} received ${pendingVote.point_change} points`, 'APPROVE');
+            logger.vote(`Vote approved: ${(targetUser.globalName || targetUser.username || targetUser.displayName || 'Unknown User')} received ${pendingVote.point_change} points`, 'APPROVE');
 
         } catch (error) {
             logger.errorWithStack('Error approving vote', error, 'VOTE');
@@ -670,7 +672,7 @@ class VotingUtils {
                 await message.reply(`❌ Vote expired for ${targetUser} - insufficient votes within the time limit`);
             }
             
-            logger.vote(`Vote expired: ${targetUser.displayName} did not receive ${pendingVote.point_change} points`, 'EXPIRE');
+            logger.vote(`Vote expired: ${(targetUser.globalName || targetUser.username || targetUser.displayName || 'Unknown User')} did not receive ${pendingVote.point_change} points`, 'EXPIRE');
             
         } catch (error) {
             logger.errorWithStack('Error handling expired vote', error, 'VOTE');
@@ -726,7 +728,7 @@ class VotingUtils {
         try {
             // Remove the user's reaction
             await reaction.users.remove(user.id);
-            logger.vote(`Removed reaction from ${user.displayName}: ${reason}`, 'REACTION');
+            logger.vote(`Removed reaction from ${userLabel}: ${reason}`, 'REACTION');
             
             // Check if user wants DM notifications
             const allowDMs = await DatabaseUtils.getUserDMPreference(user.id);
@@ -748,11 +750,11 @@ class VotingUtils {
                     await user.send({ embeds: [embed] });
                 } catch (dmError) {
                     // User has DMs disabled or blocked the bot
-                    logger.debug(`Could not send DM to ${user.displayName}: ${dmError.message}`, 'VOTE');
+                    logger.debug(`Could not send DM to ${userLabel}: ${dmError.message}`, 'VOTE');
                 }
             }
         } catch (error) {
-            logger.errorWithStack(`Error removing reaction from ${user.displayName}`, error, 'VOTE');
+            logger.errorWithStack(`Error removing reaction from ${userLabel}`, error, 'VOTE');
         }
     }
 }

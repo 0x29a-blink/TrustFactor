@@ -35,7 +35,7 @@ module.exports = {
 
         try {
             // Defer reply since this might take some time
-            await interaction.deferReply({ ephemeral: true });
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
             const embed = new EmbedBuilder()
                 .setColor('#ffa500')

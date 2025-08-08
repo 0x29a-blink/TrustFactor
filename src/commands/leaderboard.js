@@ -123,7 +123,8 @@ module.exports = {
                         components: newComponents 
                     });
                 } catch (error) {
-                    console.error('Error handling button interaction:', error);
+                    const logger = require('../utils/logger');
+                    logger.errorWithStack('Error handling button interaction', error, 'LEADERBOARD');
                     
                     // Try to send a followup error message
                     try {
@@ -140,7 +141,8 @@ module.exports = {
                             });
                         }
                     } catch (replyError) {
-                        console.error('Failed to send error reply:', replyError.message);
+                        const logger2 = require('../utils/logger');
+                        logger2.debug(`Failed to send error reply: ${replyError.message}`, 'LEADERBOARD');
                     }
                 } finally {
                     // Always remove from processing set
@@ -149,7 +151,8 @@ module.exports = {
             });
 
             collector.on('end', async (collected, reason) => {
-                console.log(`Leaderboard collector ended. Reason: ${reason}, Collected: ${collected.size}`);
+                const logger = require('../utils/logger');
+                logger.debug(`Leaderboard collector ended. Reason: ${reason}, Collected: ${collected.size}`, 'LEADERBOARD');
                 
                 // Disable all buttons when collector expires
                 try {
@@ -165,13 +168,15 @@ module.exports = {
 
                     await response.edit({ components: disabledComponents });
                 } catch (error) {
-                    console.warn('Failed to disable buttons on collector end:', error.message);
+                    const logger2 = require('../utils/logger');
+                    logger2.debug(`Failed to disable buttons on collector end: ${error.message}`, 'LEADERBOARD');
                     // This is expected if the interaction has expired
                 }
             });
 
         } catch (error) {
-            console.error('Error fetching leaderboard:', error);
+            const logger3 = require('../utils/logger');
+            logger3.errorWithStack('Error fetching leaderboard', error, 'LEADERBOARD');
             await interaction.reply({
                 content: '❌ There was an error fetching the leaderboard. Please try again.',
                 flags: MessageFlags.Ephemeral
@@ -279,7 +284,7 @@ async function generateLeaderboard(interaction, filterState) {
             
             try {
                 const user = await interaction.client.users.fetch(entry.user_id);
-                const displayName = user.displayName || user.username;
+                const displayName = user.globalName || user.username;
                 
                 // Add special indicators based on filter type
                 let indicator = '';

@@ -110,7 +110,7 @@ module.exports = {
                     interaction.channelId // channel where the command was used
                 );
 
-                // Get updated score
+                // Get updated score (returns a number)
                 const userScore = await DatabaseUtils.getUserScore(targetUser.id, serverId);
                 
                 // Log admin override usage
@@ -125,7 +125,7 @@ module.exports = {
                 await AuditLogger.logPointAward(interaction.client, serverId, {
                     targetUserId: targetUser.id,
                     points: points,
-                    newTotal: userScore.total_score,
+                    newTotal: userScore,
                     awardedBy: proposer.id,
                     method: 'Admin Override',
                     reason: reason
@@ -139,13 +139,13 @@ module.exports = {
                     .addFields([
                         { name: 'Reason', value: reason, inline: false },
                         { name: 'Applied By', value: `${proposer} (${permissionLevel.toUpperCase()})`, inline: true },
-                        { name: 'New Score', value: `${userScore.total_score} points`, inline: true },
+                        { name: 'New Score', value: `${userScore} points`, inline: true },
                         { name: 'Mode', value: '🧪 Testing Mode', inline: true }
                     ])
                     .setFooter({ text: 'No voting required - Admin override active' })
                     .setTimestamp();
 
-                logger.security(`Admin override: ${proposer.displayName} instantly awarded ${points} points to ${targetUser.displayName}`, 'AWARD');
+                logger.security(`Admin override: ${(proposer.globalName || proposer.username)} instantly awarded ${points} points to ${(targetUser.globalName || targetUser.username)}`, 'AWARD');
                 
                 return await interaction.reply({
                     embeds: [successEmbed]
@@ -162,7 +162,7 @@ module.exports = {
             const embed = new EmbedBuilder()
                 .setColor(serverConfig.embed_color || '#5865F2')
                 .setTitle('🗳️ Point Award Proposal')
-                .setDescription(`**${proposer.displayName}** wants to ${points > 0 ? 'award' : 'deduct'} **${Math.abs(points)}** point${Math.abs(points) !== 1 ? 's' : ''} ${points > 0 ? 'to' : 'from'} ${targetUser}`)
+                .setDescription(`**${proposer.globalName || proposer.username}** wants to ${points > 0 ? 'award' : 'deduct'} **${Math.abs(points)}** point${Math.abs(points) !== 1 ? 's' : ''} ${points > 0 ? 'to' : 'from'} ${targetUser}`)
                 .addFields([
                     { name: 'Reason', value: reason, inline: false },
                     { name: 'Votes Needed', value: `${votesNeeded} approval${votesNeeded !== 1 ? 's' : ''}`, inline: true },
@@ -231,13 +231,13 @@ module.exports = {
             
             const pendingVote = await DatabaseUtils.createPendingVote(voteData);
             
-            logger.vote(`Created pending vote: ${proposer.displayName} wants to award ${points} points to ${targetUser.displayName}`, 'AWARD');
+            logger.vote(`Created pending vote: ${(proposer.globalName || proposer.username)} wants to award ${points} points to ${(targetUser.globalName || targetUser.username)}`, 'AWARD');
             
             // In reaction mode, don't auto-approve - let user manually react
             if (!serverConfig.reaction_mode && serverConfig.auto_approval !== false) {
                 // Automatically record the proposer's approval vote (button mode only, if auto-approval is enabled)
                 await DatabaseUtils.recordVote(pendingVote.id, proposer.id, 'approve');
-                logger.vote(`Auto-approved by proposer: ${proposer.displayName}`, 'AWARD');
+                logger.vote(`Auto-approved by proposer: ${(proposer.globalName || proposer.username)}`, 'AWARD');
                 
                 // Send immediate ephemeral confirmation to the user
                 await interaction.followUp({
@@ -266,7 +266,7 @@ module.exports = {
                 const updatedEmbed = new EmbedBuilder()
                     .setColor('#0099ff')
                     .setTitle('🏆 Point Award Proposal')
-                    .setDescription(`${proposer.displayName} wants to award **${points} point${points !== 1 ? 's' : ''}** to ${targetUser.displayName}`)
+                    .setDescription(`${(proposer.globalName || proposer.username)} wants to award **${points} point${points !== 1 ? 's' : ''}** to ${(targetUser.globalName || targetUser.username)}`)
                     .addFields(
                         { name: 'Reason', value: reason || 'No reason provided', inline: false },
                         { name: 'Progress', value: `${updatedVoteCounts.approveCount}/${votesNeeded} approval${votesNeeded !== 1 ? 's' : ''}`, inline: true },
@@ -307,7 +307,7 @@ module.exports = {
                 const successEmbed = new EmbedBuilder()
                     .setColor('#00ff00')
                     .setTitle('✅ Award Approved!')
-                    .setDescription(`${proposer.displayName} awarded **${points} point${points !== 1 ? 's' : ''}** to ${targetUser.displayName}`)
+                    .setDescription(`${(proposer.globalName || proposer.username)} awarded **${points} point${points !== 1 ? 's' : ''}** to ${(targetUser.globalName || targetUser.username)}`)
                     .addFields(
                         { name: 'Reason', value: reason || 'No reason provided', inline: false },
                         { name: 'New Score', value: `${result.total_score} points`, inline: true },
@@ -323,11 +323,11 @@ module.exports = {
                 
                 // Send confirmation reply to the user
                 await interaction.followUp({
-                    content: `✅ **Award approved!** ${targetUser.displayName} received ${points} point${points !== 1 ? 's' : ''} and now has ${result.total_score} points total.`,
+                    content: `✅ **Award approved!** ${(targetUser.globalName || targetUser.username)} received ${points} point${points !== 1 ? 's' : ''} and now has ${result.total_score} points total.`,
                     flags: MessageFlags.Ephemeral
                 });
                 
-                logger.vote(`Award executed: ${targetUser.displayName} received ${points} points (new total: ${result.total_score})`, 'AWARD');
+                logger.vote(`Award executed: ${(targetUser.globalName || targetUser.username)} received ${points} points (new total: ${result.total_score})`, 'AWARD');
                 }
             }
 

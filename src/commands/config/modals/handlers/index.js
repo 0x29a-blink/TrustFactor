@@ -1,6 +1,7 @@
 const { MessageFlags } = require('discord.js');
 const DatabaseUtils = require('../../../../utils/database');
 const { updateServerConfig } = require('../../services/configService');
+const logger = require('../../../../utils/logger');
 
 async function handleThresholdModal(interaction, serverId) {
   const value = interaction.fields.getTextInputValue('threshold_input');
@@ -146,6 +147,53 @@ async function handleFormulaMultiplierModal(interaction, serverId) {
   await showVotingConfig(interaction, updatedConfig);
 }
 
+async function handleEditReactionModal(interaction, serverId) {
+  const emoji = interaction.fields.getTextInputValue('reaction_emoji_input');
+  const pointsValue = interaction.fields.getTextInputValue('reaction_edit_points_input').trim();
+  const points = parseInt(pointsValue.replace(/[^-\d]/g, ''));
+  if (isNaN(points) || points === 0) {
+    await interaction.followUp({ content: '❌ Invalid point value. Please enter a non-zero number (e.g., 5, -3, 100, -50).', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  try {
+    const currentReaction = await DatabaseUtils.getCustomReaction(serverId, emoji);
+    const oldPoints = currentReaction ? currentReaction.point_value : 0;
+    await DatabaseUtils.setCustomReaction(serverId, emoji, points);
+    const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+    const successEmbed = new EmbedBuilder()
+      .setColor('#00ff00')
+      .setTitle('✅ Reaction Updated')
+      .setDescription('Successfully updated reaction point value:')
+      .addFields({ name: 'Updated Reaction', value: `${emoji} → ${points > 0 ? '+' : ''}${points} points`, inline: false })
+      .setFooter({ text: 'Users can now react with this emoji for the new point value.' });
+    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('config_reactions').setLabel('← Back to Reactions').setStyle(ButtonStyle.Primary));
+    await interaction.followUp({ embeds: [successEmbed], components: [row] });
+  } catch (error) {
+    logger.errorWithStack('Error updating custom reaction', error, 'MODAL');
+    await interaction.followUp({ content: '❌ Error updating custom reaction. Please try again.', flags: MessageFlags.Ephemeral });
+  }
+}
+
+async function handleAddAutoRoleModal(interaction, serverId) {
+  const AutoRoles = require('../../features/autoRoles');
+  return AutoRoles.handleAddAutoRoleModal(interaction, serverId);
+}
+
+async function handleEditAutoRoleModal(interaction, serverId) {
+  const AutoRoles = require('../../features/autoRoles');
+  return AutoRoles.handleEditAutoRoleModal(interaction, serverId);
+}
+
+async function handleAddLeaderboardRoleModal(interaction, serverId) {
+  const Leaderboard = require('../../features/leaderboardRoles');
+  return Leaderboard.handleAddLeaderboardRoleModal(interaction, serverId);
+}
+
+async function handleEditLeaderboardRoleModal(interaction, serverId) {
+  const Leaderboard = require('../../features/leaderboardRoles');
+  return Leaderboard.handleEditLeaderboardRoleModal(interaction, serverId);
+}
+
 module.exports = {
   handleThresholdModal,
   handleTimeoutModal,
@@ -157,4 +205,9 @@ module.exports = {
   handleLogChannelModal,
   handleFormulaBaseModal,
   handleFormulaMultiplierModal,
+  handleEditReactionModal,
+  handleAddAutoRoleModal,
+  handleEditAutoRoleModal,
+  handleAddLeaderboardRoleModal,
+  handleEditLeaderboardRoleModal,
 };

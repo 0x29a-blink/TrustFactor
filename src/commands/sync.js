@@ -388,8 +388,8 @@ All member servers have been updated with the new priority settings.`)
             const userId = String(interaction.user.id);
             
             // Check if user has admin permissions
-            const hasAdminPerms = interaction.member.permissions.has('Administrator') || 
-                                 interaction.member.permissions.has('ManageGuild');
+            const hasAdminPerms = interaction.member.permissions.has(PermissionFlagsBits.Administrator) || 
+                                 interaction.member.permissions.has(PermissionFlagsBits.ManageGuild);
             
             if (!hasAdminPerms) {
                 const embed = new EmbedBuilder()
@@ -1389,7 +1389,7 @@ async function handleSyncDisband(interaction, serverId, userId, hasAdminPerms) {
             .setColor('#FF0000')
             .setTitle('❌ Permission Denied')
             .setDescription('You need Administrator or Manage Server permissions to disband sync groups.');
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 
     if (!interaction.deferred && !interaction.replied) {

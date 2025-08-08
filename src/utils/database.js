@@ -1,4 +1,5 @@
 const { supabase } = require('../config/database');
+const { toIdString, asText } = require('./ids');
 const { getServerSyncStatus, isServerPriority } = require('./syncUtils');
 
 /**
@@ -30,9 +31,9 @@ class DatabaseUtils {
                 .from('servers')
                 .select(`
                     *,
-                    log_channel::text
+                    ${asText('log_channel')}
                 `)
-                .eq('server_id', String(targetServerId))
+                .eq('server_id', toIdString(targetServerId))
                 .single();
             
             // If server doesn't exist, create it with defaults
@@ -43,11 +44,11 @@ class DatabaseUtils {
                     targetServerId = serverId;
                     const { data: fallbackData, error: fallbackError } = await supabase
                         .from('servers')
-                        .select(`
+                         .select(`
                             *,
-                            log_channel::text
+                            ${asText('log_channel')}
                         `)
-                        .eq('server_id', String(serverId))
+                        .eq('server_id', toIdString(serverId))
                         .single();
                     
                     if (!fallbackError) {
@@ -58,7 +59,7 @@ class DatabaseUtils {
                 const { data: newServer, error: insertError } = await supabase
                     .from('servers')
                     .insert({
-                        server_id: String(serverId),
+                        server_id: toIdString(serverId),
                         threshold: 3,
                         voting_timeout: 5,
                         reaction_mode: false,
@@ -104,7 +105,7 @@ class DatabaseUtils {
                 // Server is in sync group - get combined score across all group members
                 const { data: groupMembers } = await supabase
                     .from('sync_group_members')
-                    .select('server_id::text')
+                    .select(asText('server_id'))
                     .eq('sync_code', syncStatus.sync_code)
                     .eq('is_active', true);
                 
@@ -115,7 +116,7 @@ class DatabaseUtils {
                     const { data, error } = await supabase
                         .from('scores')
                         .select('total_score')
-                .eq('user_id', String(userId))
+                .eq('user_id', toIdString(userId))
                 .in('server_id', serverIds);
                     
                     if (error) throw error;
@@ -130,8 +131,8 @@ class DatabaseUtils {
             const { data, error } = await supabase
                 .from('scores')
                 .select('total_score')
-                .eq('user_id', String(userId))
-                .eq('server_id', String(serverId))
+                .eq('user_id', toIdString(userId))
+                .eq('server_id', toIdString(serverId))
                 .single();
             
             if (error && error.code !== 'PGRST116') throw error;
@@ -160,7 +161,7 @@ class DatabaseUtils {
             if (syncStatus) {
                 const { data: groupMembers } = await supabase
                     .from('sync_group_members')
-                    .select('server_id::text')
+                    .select(asText('server_id'))
                     .eq('sync_code', syncStatus.sync_code)
                     .eq('is_active', true);
                 
@@ -220,14 +221,7 @@ class DatabaseUtils {
                     
                     // Get summed scores across all servers in the sync group
                     const { data, error } = await supabase
-                        .from('scores')
-                        .select(`
-                            user_id::text,
-                            total_score,
-                            updated_at
-                        `)
-                        .in('server_id', serverIds)
-                        .order('total_score', { ascending: false });
+                        .rpc('get_group_leaderboard', { group_server_ids: serverIds, limit_count: limit });
                     
                     if (error) throw error;
                     
@@ -263,15 +257,7 @@ class DatabaseUtils {
             
             // Server is not in sync group - use normal single-server leaderboard
             const { data, error } = await supabase
-                .from('scores')
-                .select(`
-                    user_id::text,
-                    total_score,
-                    updated_at
-                `)
-                .eq('server_id', String(serverId))
-                .order('total_score', { ascending: false })
-                .limit(limit);
+                .rpc('get_server_leaderboard', { target_server_id: toIdString(serverId), limit_count: limit });
 
             if (error) throw error;
             return data || [];
@@ -515,8 +501,8 @@ class DatabaseUtils {
             const { data, error } = await supabase
                 .from('pending_votes')
                 .select('created_at')
-                .eq('proposer_id', String(userId))
-                .eq('server_id', String(serverId))
+                .eq('proposer_id', toIdString(userId))
+                .eq('server_id', toIdString(serverId))
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .single();
@@ -545,9 +531,9 @@ class DatabaseUtils {
     static async setUserScore(userId, serverId, newScore, reason, awardedBy) {
         try {
             // Force all Discord IDs to strings to prevent precision loss
-            const userIdStr = String(userId);
-            const serverIdStr = String(serverId);
-            const awardedByStr = String(awardedBy);
+            const userIdStr = toIdString(userId);
+            const serverIdStr = toIdString(serverId);
+            const awardedByStr = toIdString(awardedBy);
             
             // First, ensure user exists in users table
             await supabase

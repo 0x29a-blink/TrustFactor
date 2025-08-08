@@ -473,7 +473,7 @@ async function handleLeaderboardReset(interaction, serverId) {
 async function handleAssignLeaderboardRoles(interaction, serverId) {
     try {
         // Defer reply since this might take a moment
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         // Get server configuration to check if leaderboard roles are configured
         const serverConfig = await DatabaseUtils.getServerConfig(serverId);

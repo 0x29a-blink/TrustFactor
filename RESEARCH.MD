@@ -34,7 +34,7 @@ This document captures an in‑depth review of the current codebase (Discord.js 
 ### 2) Performance and Scalability
 
 - [P1 | M] Aggregate leaderboard in SQL instead of in JS
-  - `DatabaseUtils.getLeaderboard` currently fetches raw rows across all group servers and sums in Node. Replace with a server‑side aggregation query: `select user_id::text, sum(total_score) as total_score, max(updated_at) as updated_at from scores where server_id in (...) group by user_id order by total_score desc limit ...`.
+  - DONE: Added RPCs `get_server_leaderboard` and `get_group_leaderboard` in `src/migrations/schema.sql`. Updated `DatabaseUtils.getLeaderboard` to call them.
   - Benefit: lower data transfer, faster results, less memory pressure.
 
 - [P2 | M] Role assignment batching and rate-limit safety
@@ -103,13 +103,14 @@ This document captures an in‑depth review of the current codebase (Discord.js 
 - [P1 | S] Use `PermissionFlagsBits` in permission checks and imports.
 - [P1 | S] Standardize on `user.globalName || user.username` for Users, and `member.displayName` for Members.
   - Progress: updated in `award`, `messageReactionAdd`, `messageCreate`, `leaderboard`, and `voting` logs.
+  - Also updated sync permission checks to `PermissionFlagsBits`.
 
 ---
 
 ### 7) Dead Code, Broken Scripts, and Cleanup
 
 - [P1 | S] Remove/repair NPM scripts in `package.json`
-  - These scripts reference missing files: `migrate`, `security:*`, `performance:*`, and `database:verify-all`. Replace with Supabase CLI-based workflows or add the missing files.
+  - DONE: Replaced broken scripts with no-op guidance to use Supabase CLI.
 
 - [DONE | P1 | S] Remove duplicate `syncHandler` file under `src/events/` and any unused utilities.
   - Replaced contents with a thin re-export to `src/utils/syncHandler.js` to avoid breaking imports.
@@ -117,6 +118,7 @@ This document captures an in‑depth review of the current codebase (Discord.js 
 
 - [P1 | S] Replace console logging with centralized `logger`
   - Progress: converted in `utils/database.js` (leaderboard roles), `events/messageReactionAdd.js`, `commands/leaderboard.js`, `events/messageCreate.js`, `utils/deploy-commands.js`.
+  - Remaining: keep `logger` in `utils/logger.js` console outputs by design; defer `config.js` until end.
 
 ---
 
@@ -157,6 +159,7 @@ This document captures an in‑depth review of the current codebase (Discord.js 
 1) Snowflake casting audit (S)
    - Update remaining `.eq(...)` calls (e.g., `admin.clear-history`) to cast IDs with `String(...)`.
    - Progress: `admin`, `database`, `sync`, and vote helpers updated to String-cast snowflakes.
+   - Added `src/utils/ids.js` helpers: `toIdString`, `asText` and started adopting in database utils.
 
 2) Leaderboard SQL aggregation (M)
    - Replace JS aggregation with SQL `sum(total_score)` grouped by `user_id` (add a Postgres view or RPC if needed).

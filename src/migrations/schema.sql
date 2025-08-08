@@ -747,3 +747,40 @@ COMMENT ON INDEX idx_sync_pending_requests_sync_code IS 'PERFORMANCE: Improves J
 COMMENT ON INDEX idx_user_achievements_achievement_id IS 'PERFORMANCE: Improves JOIN performance between user_achievements and achievements tables';
 COMMENT ON INDEX idx_user_achievements_server_id IS 'PERFORMANCE: Improves JOIN performance between user_achievements and servers tables';
 COMMENT ON INDEX idx_user_server_preferences_server_id IS 'PERFORMANCE: Improves JOIN performance between user_server_preferences and servers tables';
+
+-- ================================
+-- LEADERBOARD RPCs (Performance)
+-- ================================
+
+CREATE OR REPLACE FUNCTION public.get_server_leaderboard(target_server_id TEXT, limit_count INTEGER)
+RETURNS TABLE (
+  user_id TEXT,
+  total_score INTEGER,
+  updated_at TIMESTAMPTZ
+) LANGUAGE sql STABLE AS $$
+  SELECT user_id::text, total_score, updated_at
+  FROM scores
+  WHERE server_id::text = target_server_id
+  ORDER BY total_score DESC
+  LIMIT COALESCE(limit_count, 10)
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_group_leaderboard(group_server_ids TEXT[], limit_count INTEGER)
+RETURNS TABLE (
+  user_id TEXT,
+  total_score BIGINT,
+  updated_at TIMESTAMPTZ
+) LANGUAGE sql STABLE AS $$
+  WITH s AS (
+    SELECT user_id, total_score, updated_at
+    FROM scores
+    WHERE server_id::text = ANY(group_server_ids)
+  )
+  SELECT user_id::text,
+         SUM(total_score) AS total_score,
+         MAX(updated_at) AS updated_at
+  FROM s
+  GROUP BY user_id
+  ORDER BY SUM(total_score) DESC
+  LIMIT COALESCE(limit_count, 10)
+$$;

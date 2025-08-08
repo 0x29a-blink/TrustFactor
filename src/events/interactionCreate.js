@@ -102,8 +102,13 @@ async function handleModalSubmitInteraction(interaction) {
     // Config menu modals (all config-related modals)
     if (customId.startsWith('config_')) {
         logger.config(`Config modal submitted: ${customId}`, 'MODAL');
-        const ConfigCommand = require('../commands/config');
-        await ConfigCommand.handleModalSubmit(interaction);
+        const ConfigRouter = require('../commands/config/router');
+        if (ConfigRouter.handleModalSubmit) {
+            await ConfigRouter.handleModalSubmit(interaction);
+        } else {
+            const ConfigCommand = require('../commands/config');
+            await ConfigCommand.handleModalSubmit(interaction);
+        }
     }
     
     // Unknown modal

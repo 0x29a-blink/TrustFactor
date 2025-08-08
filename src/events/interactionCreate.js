@@ -102,8 +102,8 @@ async function handleModalSubmitInteraction(interaction) {
     // Config menu modals (all config-related modals)
     if (customId.startsWith('config_')) {
         logger.config(`Config modal submitted: ${customId}`, 'MODAL');
-        const ConfigCommand = require('../commands/config');
-        await ConfigCommand.handleModalSubmit(interaction);
+        const ConfigRouter = require('../commands/config/router');
+        await ConfigRouter.handleModalSubmit(interaction);
     }
     
     // Unknown modal
@@ -125,8 +125,8 @@ async function handleSelectMenuInteraction(interaction) {
     // Config menu select menus
     if (customId.startsWith('config_')) {
         logger.config(`Config select menu used: ${customId}`, 'SELECT');
-        const ConfigCommand = require('../commands/config');
-        await ConfigCommand.handleConfigInteraction(interaction);
+        const ConfigRouter = require('../commands/config/router');
+        await ConfigRouter.handleConfigInteraction(interaction);
     }
     
     // Sync menu select menus
@@ -162,8 +162,8 @@ async function handleButtonInteraction(interaction) {
     // Config menu buttons and selects
     else if (customId.startsWith('config_')) {
         logger.config(`Config button clicked: ${customId}`, 'BUTTON');
-        const ConfigCommand = require('../commands/config');
-        await ConfigCommand.handleConfigInteraction(interaction);
+        const ConfigRouter = require('../commands/config/router');
+        await ConfigRouter.handleConfigInteraction(interaction);
     }
     
     // Sync menu buttons

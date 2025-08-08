@@ -32,7 +32,7 @@ class DatabaseUtils {
                     *,
                     log_channel::text
                 `)
-                .eq('server_id', targetServerId)
+                .eq('server_id', String(targetServerId))
                 .single();
             
             // If server doesn't exist, create it with defaults
@@ -47,7 +47,7 @@ class DatabaseUtils {
                             *,
                             log_channel::text
                         `)
-                        .eq('server_id', serverId)
+                        .eq('server_id', String(serverId))
                         .single();
                     
                     if (!fallbackError) {
@@ -58,7 +58,7 @@ class DatabaseUtils {
                 const { data: newServer, error: insertError } = await supabase
                     .from('servers')
                     .insert({
-                        server_id: serverId,
+                        server_id: String(serverId),
                         threshold: 3,
                         voting_timeout: 5,
                         reaction_mode: false,
@@ -115,8 +115,8 @@ class DatabaseUtils {
                     const { data, error } = await supabase
                         .from('scores')
                         .select('total_score')
-                        .eq('user_id', userId)
-                        .in('server_id', serverIds);
+                .eq('user_id', String(userId))
+                .in('server_id', serverIds);
                     
                     if (error) throw error;
                     
@@ -130,8 +130,8 @@ class DatabaseUtils {
             const { data, error } = await supabase
                 .from('scores')
                 .select('total_score')
-                .eq('user_id', userId)
-                .eq('server_id', serverId)
+                .eq('user_id', String(userId))
+                .eq('server_id', String(serverId))
                 .single();
             
             if (error && error.code !== 'PGRST116') throw error;
@@ -182,7 +182,7 @@ class DatabaseUtils {
                     channel_id::text,
                     server_id::text
                 `)
-                .eq('user_id', userId)
+                .eq('user_id', String(userId))
                 .in('server_id', serverIds)
                 .order('created_at', { ascending: false })
                 .limit(limit);
@@ -269,7 +269,7 @@ class DatabaseUtils {
                     total_score,
                     updated_at
                 `)
-                .eq('server_id', serverId)
+                .eq('server_id', String(serverId))
                 .order('total_score', { ascending: false })
                 .limit(limit);
 
@@ -402,7 +402,7 @@ class DatabaseUtils {
                 .from('votes')
                 .upsert({
                     pending_vote_id: voteId,
-                    voter_id: voterId,
+                    voter_id: String(voterId),
                     vote_type: voteType
                 }, {
                     onConflict: 'pending_vote_id,voter_id'
@@ -425,20 +425,27 @@ class DatabaseUtils {
      */
     static async getVoteCount(voteId) {
         try {
-            const { data, error } = await supabase
+            const { count: approveCount, error: approveErr } = await supabase
                 .from('votes')
-                .select('vote_type')
-                .eq('pending_vote_id', voteId);
-            
-            if (error) throw error;
-            
-            const approveCount = data.filter(vote => vote.vote_type === 'approve').length;
-            const rejectCount = data.filter(vote => vote.vote_type === 'reject').length;
-            const totalVotes = data.length;
+                .select('*', { count: 'exact', head: true })
+                .eq('pending_vote_id', voteId)
+                .eq('vote_type', 'approve');
+
+            if (approveErr) throw approveErr;
+
+            const { count: rejectCount, error: rejectErr } = await supabase
+                .from('votes')
+                .select('*', { count: 'exact', head: true })
+                .eq('pending_vote_id', voteId)
+                .eq('vote_type', 'reject');
+
+            if (rejectErr) throw rejectErr;
+
+            const totalVotes = (approveCount || 0) + (rejectCount || 0);
             
             return {
-                approveCount,
-                rejectCount,
+                approveCount: approveCount || 0,
+                rejectCount: rejectCount || 0,
                 totalVotes
             };
         } catch (error) {
@@ -459,7 +466,7 @@ class DatabaseUtils {
                 .from('votes')
                 .select('*')
                 .eq('pending_vote_id', voteId)
-                .eq('voter_id', userId)
+                .eq('voter_id', String(userId))
                 .single();
             
             if (error && error.code === 'PGRST116') {
@@ -486,7 +493,7 @@ class DatabaseUtils {
                 .from('votes')
                 .delete()
                 .eq('pending_vote_id', voteId)
-                .eq('voter_id', userId)
+                .eq('voter_id', String(userId))
                 .select();
             
             if (error) throw error;
@@ -508,8 +515,8 @@ class DatabaseUtils {
             const { data, error } = await supabase
                 .from('pending_votes')
                 .select('created_at')
-                .eq('proposer_id', userId)
-                .eq('server_id', serverId)
+                .eq('proposer_id', String(userId))
+                .eq('server_id', String(serverId))
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .single();
@@ -1047,13 +1054,14 @@ class DatabaseUtils {
      */
     static async assignLeaderboardRoles(serverId, guild) {
         try {
-            console.log(`🔍 Starting leaderboard role assignment for server ${serverId}`);
+            const logger = require('./logger');
+            logger.config(`🔍 Starting leaderboard role assignment for server ${serverId}`, 'LEADERBOARD-ROLES');
             const serverConfig = await this.getServerConfig(serverId);
             const leaderboardRoles = serverConfig.leaderboard_roles || {};
-            console.log(`📋 Leaderboard roles config:`, JSON.stringify(leaderboardRoles, null, 2));
+            logger.object(`📋 Leaderboard roles config:`, leaderboardRoles, 'LEADERBOARD-ROLES');
             
             if (Object.keys(leaderboardRoles).length === 0) {
-                console.log(`❌ No leaderboard roles configured`);
+                logger.config(`❌ No leaderboard roles configured`, 'LEADERBOARD-ROLES');
                 return { assigned: 0, removed: 0, errors: [] };
             }
 
@@ -1062,37 +1070,37 @@ class DatabaseUtils {
             const positiveStrategy = assignmentStrategy.positive || 'server-local';
             const negativeStrategy = assignmentStrategy.negative || 'server-local';
             
-            console.log(`⚙️ Assignment strategies - Positive: ${positiveStrategy}, Negative: ${negativeStrategy}`);
+            logger.config(`⚙️ Assignment strategies - Positive: ${positiveStrategy}, Negative: ${negativeStrategy}`, 'LEADERBOARD-ROLES');
 
             const leaderboard = await this.getLeaderboard(serverId, 100);
             let positiveLeaderboard = leaderboard.filter(entry => entry.total_score > 0).slice(0, 10);
             let negativeLeaderboard = leaderboard.filter(entry => entry.total_score < 0)
                 .sort((a, b) => a.total_score - b.total_score).slice(0, 10);
             
-            console.log(`📊 Original Positive leaderboard (top 10):`, positiveLeaderboard.map(e => `${e.user_id}: ${e.total_score}`));
-            console.log(`📊 Original Negative leaderboard (top 10):`, negativeLeaderboard.map(e => `${e.user_id}: ${e.total_score}`));
+            logger.object(`📊 Original Positive leaderboard (top 10):`, positiveLeaderboard.map(e => `${e.user_id}: ${e.total_score}`), 'LEADERBOARD-ROLES');
+            logger.object(`📊 Original Negative leaderboard (top 10):`, negativeLeaderboard.map(e => `${e.user_id}: ${e.total_score}`), 'LEADERBOARD-ROLES');
 
             // Filter leaderboards based on assignment strategy
             if (positiveStrategy === 'server-local' || positiveStrategy === 'global-filtered') {
                 const originalCount = positiveLeaderboard.length;
                 positiveLeaderboard = await this.filterForGuildMembers(positiveLeaderboard, guild);
-                console.log(`${positiveStrategy === 'server-local' ? '🏠' : '🌐'} Positive ${positiveStrategy} filtering: ${originalCount} → ${positiveLeaderboard.length} members`);
+                logger.config(`${positiveStrategy === 'server-local' ? '🏠' : '🌐'} Positive ${positiveStrategy} filtering: ${originalCount} → ${positiveLeaderboard.length} members`, 'LEADERBOARD-ROLES');
             }
             
             if (negativeStrategy === 'server-local' || negativeStrategy === 'global-filtered') {
                 const originalCount = negativeLeaderboard.length;
                 negativeLeaderboard = await this.filterForGuildMembers(negativeLeaderboard, guild);
-                console.log(`${negativeStrategy === 'server-local' ? '🏠' : '🌐'} Negative ${negativeStrategy} filtering: ${originalCount} → ${negativeLeaderboard.length} members`);
+                logger.config(`${negativeStrategy === 'server-local' ? '🏠' : '🌐'} Negative ${negativeStrategy} filtering: ${originalCount} → ${negativeLeaderboard.length} members`, 'LEADERBOARD-ROLES');
             }
 
-            console.log(`📊 Final Positive leaderboard:`, positiveLeaderboard.map(e => `${e.user_id}: ${e.total_score}`));
-            console.log(`📊 Final Negative leaderboard:`, negativeLeaderboard.map(e => `${e.user_id}: ${e.total_score}`));
+            logger.object(`📊 Final Positive leaderboard:`, positiveLeaderboard.map(e => `${e.user_id}: ${e.total_score}`), 'LEADERBOARD-ROLES');
+            logger.object(`📊 Final Negative leaderboard:`, negativeLeaderboard.map(e => `${e.user_id}: ${e.total_score}`), 'LEADERBOARD-ROLES');
 
             const results = { assigned: 0, removed: 0, errors: [] };
 
             // Process positive leaderboard roles
             const positiveRoles = leaderboardRoles.positive || {};
-            console.log(`🏆 Processing positive roles:`, positiveRoles);
+            logger.object(`🏆 Processing positive roles:`, positiveRoles, 'LEADERBOARD-ROLES');
             
             const positiveAssignments = await this.processLeaderboardRoles(
                 positiveLeaderboard, positiveRoles, guild, 'positive', positiveStrategy
@@ -1102,7 +1110,7 @@ class DatabaseUtils {
 
             // Process negative leaderboard roles
             const negativeRoles = leaderboardRoles.negative || {};
-            console.log(`💀 Processing negative roles:`, negativeRoles);
+            logger.object(`💀 Processing negative roles:`, negativeRoles, 'LEADERBOARD-ROLES');
             
             const negativeAssignments = await this.processLeaderboardRoles(
                 negativeLeaderboard, negativeRoles, guild, 'negative', negativeStrategy
@@ -1130,7 +1138,7 @@ class DatabaseUtils {
                             if (!usersInTopPositions.has(memberIdString)) {
                                 await member.roles.remove(roleIdString, 'No longer in leaderboard position');
                                 results.removed++;
-                                console.log(`🗑️ Removed role ${role.name} from ${member.user.tag} (no longer in top positions)`);
+                                logger.config(`🗑️ Removed role ${role.name} from ${member.user.tag} (no longer in top positions)`, 'LEADERBOARD-ROLES');
                             }
                         }
                     }
@@ -1140,7 +1148,7 @@ class DatabaseUtils {
                 }
             }
             
-            console.log(`🎯 Final results: ${results.assigned} assigned, ${results.removed} removed, ${results.errors.length} errors`);
+            logger.config(`🎯 Final results: ${results.assigned} assigned, ${results.removed} removed, ${results.errors.length} errors`, 'LEADERBOARD-ROLES');
             return results;
         } catch (error) {
             console.error('Error assigning leaderboard roles:', error);
@@ -1162,9 +1170,9 @@ class DatabaseUtils {
                 const userIdString = String(entry.user_id);
                 await guild.members.fetch(userIdString);
                 filteredLeaderboard.push(entry);
-                console.log(`✅ User ${entry.user_id} is in guild - keeping in leaderboard`);
+                logger.debug(`✅ User ${entry.user_id} is in guild - keeping in leaderboard`, 'LEADERBOARD-ROLES');
             } catch (error) {
-                console.log(`❌ User ${entry.user_id} not in guild - removing from leaderboard`);
+                logger.debug(`❌ User ${entry.user_id} not in guild - removing from leaderboard`, 'LEADERBOARD-ROLES');
             }
         }
         
@@ -1188,7 +1196,7 @@ class DatabaseUtils {
             const position = i + 1;
             const roleId = roles[position];
             
-            console.log(`👤 ${type} position ${position}: User ${entry.user_id} (${entry.total_score} pts), roleId: ${roleId}, strategy: ${strategy}`);
+            logger.debug(`👤 ${type} position ${position}: User ${entry.user_id} (${entry.total_score} pts), roleId: ${roleId}, strategy: ${strategy}`, 'LEADERBOARD-ROLES');
             
             if (roleId) {
                 try {
@@ -1200,7 +1208,7 @@ class DatabaseUtils {
                         try {
                             member = await guild.members.fetch(userIdString);
                         } catch (fetchError) {
-                            console.log(`🌍 Global strategy: User ${entry.user_id} not in guild, skipping role assignment`);
+                    logger.debug(`🌍 Global strategy: User ${entry.user_id} not in guild, skipping role assignment`, 'LEADERBOARD-ROLES');
                             continue;
                         }
                     } else {
@@ -1211,16 +1219,16 @@ class DatabaseUtils {
                     const roleIdString = String(roleId);
                     const role = guild.roles.cache.get(roleIdString);
                     
-                    console.log(`🔍 Member: ${member.user.tag}, Role: ${role ? role.name : 'NOT FOUND'}, Has role: ${member.roles.cache.has(roleIdString)}`);
+                    logger.debug(`🔍 Member: ${member.user.tag}, Role: ${role ? role.name : 'NOT FOUND'}, Has role: ${member.roles.cache.has(roleIdString)}`, 'LEADERBOARD-ROLES');
                     
                     if (role && !member.roles.cache.has(roleIdString)) {
                         await member.roles.add(roleIdString, `${type} leaderboard position ${position} role assignment (${strategy})`);
-                        console.log(`✅ Assigned ${type} role ${role.name} to ${member.user.tag} (position ${position}, ${strategy})`);
+                        logger.config(`✅ Assigned ${type} role ${role.name} to ${member.user.tag} (position ${position}, ${strategy})`, 'LEADERBOARD-ROLES');
                         results.assigned++;
                     } else if (!role) {
-                        console.log(`❌ Role ${roleIdString} not found in guild`);
+                        logger.warn(`❌ Role ${roleIdString} not found in guild`, 'LEADERBOARD-ROLES');
                     } else {
-                        console.log(`ℹ️ User ${member.user.tag} already has role ${role.name}`);
+                        logger.debug(`ℹ️ User ${member.user.tag} already has role ${role.name}`, 'LEADERBOARD-ROLES');
                     }
                 } catch (error) {
                     console.error(`Error assigning ${type} role to user ${entry.user_id}:`, error);

@@ -92,7 +92,7 @@ module.exports = {
                 const timeSinceLastAward = Date.now() - new Date(lastAward.created_at).getTime();
                 
                 if (timeSinceLastAward < cooldownMs) {
-                    logger.vote(`User ${message.author.displayName} is on cooldown`, 'MESSAGE');
+                    logger.vote(`User ${(message.author.globalName || message.author.username)} is on cooldown`, 'MESSAGE');
                     await message.react('⏰');
                     return;
                 }
@@ -114,7 +114,7 @@ module.exports = {
             
             const pendingVote = await DatabaseUtils.createPendingVote(voteData);
             
-            logger.vote(`Created pending vote from reply: ${message.author.displayName} wants to award ${points} points to ${originalMessage.author.displayName}`, 'MESSAGE');
+            logger.vote(`Created pending vote from reply: ${(message.author.globalName || message.author.username)} wants to award ${points} points to ${(originalMessage.author.globalName || originalMessage.author.username)}`, 'MESSAGE');
             
             // Add confirmation reaction to show the bot detected the award request
             await message.react('👀');
@@ -134,12 +134,12 @@ module.exports = {
                         await VotingUtils.handleExpiredVote(currentVote, message);
                     }
                 } catch (error) {
-                    console.error('Error handling vote expiration:', error);
+                    logger.errorWithStack('Error handling vote expiration', error, 'MESSAGE');
                 }
             }, serverConfig.voting_timeout * 60 * 1000);
             
         } catch (error) {
-            console.error('Error processing reply-based point award:', error);
+            logger.errorWithStack('Error processing reply-based point award', error, 'MESSAGE');
             // Add error reaction
             await message.react('❌');
         }

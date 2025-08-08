@@ -848,7 +848,7 @@ module.exports = {
                 ...updates,
                 updated_at: new Date().toISOString()
             })
-            .eq('server_id', serverId);
+            .eq('server_id', String(serverId));
 
         if (error) throw error;
 

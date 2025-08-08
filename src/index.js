@@ -1,16 +1,24 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const logger = require('./utils/logger');
 
-// Initialize Discord client with required intents
+// Initialize Discord client with required intents and partials
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMessageReactions
+        GatewayIntentBits.GuildMessageReactions,
+        GatewayIntentBits.GuildMembers
+    ],
+    partials: [
+        Partials.Message,
+        Partials.Channel,
+        Partials.Reaction,
+        Partials.User,
+        Partials.GuildMember
     ]
 });
 
@@ -62,8 +70,19 @@ process.on('uncaughtException', error => {
     process.exit(1);
 });
 
+// Resolve environment profile (e.g., 'main' or 'dev') and pick suffixed vars if present
+const PROFILE = (process.env.BOT_PROFILE || process.env.ENV_PROFILE || 'dev').toLowerCase();
+const SUFFIX = PROFILE.toUpperCase();
+const resolveEnv = (base) => process.env[`${base}_${SUFFIX}`] ?? process.env[base];
+
 // Login to Discord
-client.login(process.env.DISCORD_TOKEN).catch(error => {
+const discordToken = resolveEnv('DISCORD_TOKEN');
+if (!discordToken) {
+    logger.error(`Missing DISCORD_TOKEN (or DISCORD_TOKEN_${SUFFIX}) for profile '${PROFILE}'`, 'LOGIN');
+    process.exit(1);
+}
+
+client.login(discordToken).catch(error => {
     logger.errorWithStack('Failed to login to Discord', error, 'LOGIN');
     process.exit(1);
 });

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ComponentType, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const { supabase } = require('../config/database');
 const logger = require('../utils/logger');
 
@@ -68,8 +68,8 @@ module.exports = {
             const userId = String(interaction.user.id);
             
             // Check if user has admin permissions
-            const hasAdminPerms = interaction.member.permissions.has('Administrator') || 
-                                 interaction.member.permissions.has('ManageGuild');
+            const hasAdminPerms = interaction.member.permissions.has(PermissionFlagsBits.Administrator) || 
+                                 interaction.member.permissions.has(PermissionFlagsBits.ManageGuild);
             
             if (!hasAdminPerms) {
                 logger.security(`Permission denied for sync priority select by ${interaction.user.tag}`, 'SYNC');
@@ -77,7 +77,7 @@ module.exports = {
                     .setColor('#FF0000')
                     .setTitle('❌ Permission Denied')
                     .setDescription('You need Administrator or Manage Server permissions to set priority servers.');
-                return interaction.reply({ embeds: [embed], ephemeral: true });
+                return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
             }
 
             await interaction.deferUpdate();
@@ -146,8 +146,8 @@ All member servers have been updated with the new priority settings.`)
             const userId = String(interaction.user.id);
             
             // Check if user has admin permissions
-            const hasAdminPerms = interaction.member.permissions.has('Administrator') || 
-                                 interaction.member.permissions.has('ManageGuild');
+            const hasAdminPerms = interaction.member.permissions.has(PermissionFlagsBits.Administrator) || 
+                                 interaction.member.permissions.has(PermissionFlagsBits.ManageGuild);
             
             if (!hasAdminPerms) {
                 logger.security(`Permission denied for sync leave priority select by ${interaction.user.tag}`, 'SYNC');
@@ -155,7 +155,7 @@ All member servers have been updated with the new priority settings.`)
                     .setColor('#FF0000')
                     .setTitle('❌ Permission Denied')
                     .setDescription('You need Administrator or Manage Server permissions to leave sync groups.');
-                return interaction.reply({ embeds: [embed], ephemeral: true });
+                return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
             }
 
             await interaction.deferUpdate();
@@ -225,15 +225,15 @@ All member servers have been updated with the new priority settings.`)
             const userId = String(interaction.user.id);
             
             // Check if user has admin permissions
-            const hasAdminPerms = interaction.member.permissions.has('Administrator') || 
-                                 interaction.member.permissions.has('ManageGuild');
+            const hasAdminPerms = interaction.member.permissions.has(PermissionFlagsBits.Administrator) || 
+                                 interaction.member.permissions.has(PermissionFlagsBits.ManageGuild);
             
             if (!hasAdminPerms) {
                 const embed = new EmbedBuilder()
                     .setColor('#FF0000')
                     .setTitle('❌ Permission Denied')
                     .setDescription('You need Administrator or Manage Server permissions to disband sync groups.');
-                return interaction.reply({ embeds: [embed], ephemeral: true });
+                return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
             }
 
             await interaction.deferUpdate();
@@ -322,15 +322,15 @@ All member servers have been updated with the new priority settings.`)
             const userId = String(interaction.user.id);
             
             // Check if user has admin permissions
-            const hasAdminPerms = interaction.member.permissions.has('Administrator') || 
-                                 interaction.member.permissions.has('ManageGuild');
+            const hasAdminPerms = interaction.member.permissions.has(PermissionFlagsBits.Administrator) || 
+                                 interaction.member.permissions.has(PermissionFlagsBits.ManageGuild);
             
             if (!hasAdminPerms) {
                 const embed = new EmbedBuilder()
                     .setColor('#FF0000')
                     .setTitle('❌ Permission Denied')
                     .setDescription('You need Administrator or Manage Server permissions to leave sync groups.');
-                return interaction.reply({ embeds: [embed], ephemeral: true });
+                return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
             }
 
             await interaction.deferUpdate();
@@ -396,7 +396,7 @@ All member servers have been updated with the new priority settings.`)
                     .setColor('#FF0000')
                     .setTitle('❌ Permission Denied')
                     .setDescription('You need Administrator or Manage Server permissions to leave sync groups.');
-                return interaction.reply({ embeds: [embed], ephemeral: true });
+                return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
             }
 
             await interaction.deferUpdate();
@@ -500,7 +500,7 @@ All member servers have been updated with the new priority settings.`)
             if (interaction.replied || interaction.deferred) {
                 await interaction.editReply({ embeds: [embed] });
             } else {
-                await interaction.reply({ embeds: [embed], ephemeral: true });
+                await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
             }
         }
     },
@@ -511,8 +511,8 @@ All member servers have been updated with the new priority settings.`)
         const userId = String(interaction.user.id);
 
         // Check if user has admin permissions
-        const hasAdminPerms = interaction.member.permissions.has('Administrator') || 
-                             interaction.member.permissions.has('ManageGuild');
+        const hasAdminPerms = interaction.member.permissions.has(PermissionFlagsBits.Administrator) || 
+                             interaction.member.permissions.has(PermissionFlagsBits.ManageGuild);
 
         try {
             switch (subcommand) {
@@ -548,7 +548,7 @@ All member servers have been updated with the new priority settings.`)
             if (interaction.replied || interaction.deferred) {
                 await interaction.editReply({ embeds: [embed] });
             } else {
-                await interaction.reply({ embeds: [embed], ephemeral: true });
+                await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
             }
         }
     }
@@ -560,7 +560,7 @@ async function handleSyncRequest(interaction, serverId, userId, hasAdminPerms) {
             .setColor('#FF0000')
             .setTitle('❌ Permission Denied')
             .setDescription('You need Administrator or Manage Server permissions to create sync groups.');
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 
     if (!interaction.deferred && !interaction.replied) {
@@ -573,7 +573,7 @@ async function handleSyncRequest(interaction, serverId, userId, hasAdminPerms) {
     const { data: existingGroup } = await supabase
         .from('sync_group_members')
         .select('sync_code, sync_groups(group_name)')
-        .eq('server_id', serverId)
+        .eq('server_id', String(serverId))
         .eq('is_active', true)
         .single();
 
@@ -641,7 +641,7 @@ async function handleSyncConfirm(interaction, serverId, userId, hasAdminPerms) {
             .setColor('#FF0000')
             .setTitle('❌ Permission Denied')
             .setDescription('You need Administrator or Manage Server permissions to join sync groups.');
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 
     const syncCode = interaction.options.getString('code').toUpperCase();
@@ -764,7 +764,7 @@ async function handleSyncLeave(interaction, serverId, userId, hasAdminPerms) {
             .setColor('#FF0000')
             .setTitle('❌ Permission Denied')
             .setDescription('You need Administrator or Manage Server permissions to leave sync groups.');
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 
     if (!interaction.deferred && !interaction.replied) {
@@ -1295,7 +1295,7 @@ async function handleSetPriority(interaction, serverId, userId, hasAdminPerms) {
             .setColor('#FF0000')
             .setTitle('❌ Permission Denied')
             .setDescription('You need Administrator or Manage Server permissions to set priority servers.');
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     }
 
     if (!interaction.deferred && !interaction.replied) {

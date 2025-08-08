@@ -81,13 +81,7 @@ module.exports = {
                 logger.verbose(`Custom emoji reaction: ${emojiString} (ID: ${reaction.emoji.id}, Name: ${reaction.emoji.name})`, 'REACTION');
             }
             
-            // Only process custom emoji reactions for point awards (not Unicode emojis)
-            if (!reaction.emoji.id) {
-                logger.verbose(`Unicode emoji reaction ignored: ${emojiString}`, 'REACTION');
-                return;
-            }
-            
-            // Check if this emoji is configured for point awards
+            // Check if this emoji is configured for point awards (support custom and Unicode)
             const customReaction = await DatabaseUtils.getCustomReaction(message.guild.id, emojiString);
             if (!customReaction) {
                 logger.verbose(`Custom emoji ${emojiString} not configured for point awards`, 'REACTION');
@@ -95,7 +89,9 @@ module.exports = {
                 return;
             }
             
-            logger.vote(`Reaction-based vote detected: ${user.displayName} reacted ${emojiString} (${customReaction.point_value} points) to ${message.author.displayName}'s message`, 'REACTION');
+            const userLabel = user.globalName || user.username;
+            const authorLabel = message.author.globalName || message.author.username;
+            logger.vote(`Reaction-based vote detected: ${userLabel} reacted ${emojiString} (${customReaction.point_value} points) to ${authorLabel}'s message`, 'REACTION');
             
             // Prevent self-reactions (users can't award points to themselves)
             if (user.id === message.author.id) {
@@ -128,7 +124,7 @@ module.exports = {
                 const timeSinceLastAward = Date.now() - new Date(lastAward.created_at).getTime();
                 
                 if (timeSinceLastAward < cooldownMs) {
-                    logger.vote(`User ${user.displayName} is on cooldown for reaction-based voting`, 'REACTION');
+                    logger.vote(`User ${(user.globalName || user.username)} is on cooldown for reaction-based voting`, 'REACTION');
                     // Add a temporary reaction to indicate cooldown
                     try {
                         await message.react('⏰');
@@ -164,7 +160,7 @@ module.exports = {
             
             const pendingVote = await DatabaseUtils.createPendingVote(voteData);
             
-            console.log(`📝 Created pending reaction-based vote: ${user.displayName} wants to award ${customReaction.point_value} points to ${message.author.displayName}`);
+            logger.vote(`Created pending reaction-based vote: ${(user.globalName || user.username)} -> ${(message.author.globalName || message.author.username)} for ${customReaction.point_value} pts`, 'REACTION');
             
             // --- DM or channel feedback to proposer ---
             const progressText = `(1/${voteData.votesNeeded} approvals, 0 rejections)`;
@@ -186,11 +182,11 @@ ${messageLink}`;
                     try {
                         if (message.channel && message.channel.send) {
                             await message.channel.send({
-                                content: `${user}, you started a vote to award **${customReaction.point_value}** points to ${message.author.displayName}! ${progressText}\n${messageLink} (DMs are closed)`
+                                content: `${user}, you started a vote to award **${customReaction.point_value}** points to ${(message.author.globalName || message.author.username)}! ${progressText}\n${messageLink} (DMs are closed)`
                             });
                         }
                     } catch (chanErr) {
-                        console.log('Could not send fallback feedback in channel:', chanErr.message);
+                        logger.debug(`Could not send fallback feedback in channel: ${chanErr.message}`,'REACTION');
                     }
                 }
             }
@@ -210,7 +206,7 @@ ${messageLink}`;
                 const wasApproved = await VotingUtils.approveVote(pendingVote, null, message);
                 if (!wasApproved) {
                     // Vote was already processed by another user (race condition)
-                    console.log(`Reaction-based vote ${pendingVote.id} was already processed by another user`);
+                    logger.debug(`Reaction-based vote ${pendingVote.id} was already processed by another user`, 'REACTION');
                     return; // Exit early since vote is already handled
                 }
             } else {

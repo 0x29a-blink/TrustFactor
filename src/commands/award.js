@@ -110,6 +110,17 @@ module.exports = {
                     interaction.channelId // channel where the command was used
                 );
 
+                // Update roles immediately (leaderboard and auto roles)
+                try {
+                    const guild = interaction.guild;
+                    if (guild) {
+                        await DatabaseUtils.assignLeaderboardRoles(serverId, guild);
+                        await DatabaseUtils.assignAutoRoles(serverId, guild);
+                    }
+                } catch (roleError) {
+                    console.error('Error assigning roles:', roleError);
+                }
+
                 // Get updated score (returns a number)
                 const userScore = await DatabaseUtils.getUserScore(targetUser.id, serverId);
                 
@@ -299,6 +310,17 @@ module.exports = {
                         confirmationMessage.id, // message ID of the vote confirmation
                         confirmationMessage.channelId // channel where the vote took place
                     );
+
+                    // Update roles after applying score change
+                    try {
+                        const guild = interaction.guild;
+                        if (guild) {
+                            await DatabaseUtils.assignLeaderboardRoles(serverId, guild);
+                            await DatabaseUtils.assignAutoRoles(serverId, guild);
+                        }
+                    } catch (roleError) {
+                        console.error('Error assigning roles:', roleError);
+                    }
                     
                     // Mark vote as approved
                     await DatabaseUtils.updateVoteStatus(pendingVote.id, 'approved');

@@ -228,6 +228,8 @@ async function handleConfigInteraction(interaction) {
     if (id === 'config_blocked_channels_add') return Blocked.startBlockedChannelAddProcess(interaction);
 
     // Leaderboard roles actions
+    if (id === 'config_leaderboard_roles_add_positive') return Leaderboard.showAddLeaderboardRoleModal(interaction, 'positive');
+    if (id === 'config_leaderboard_roles_add_negative') return Leaderboard.showAddLeaderboardRoleModal(interaction, 'negative');
     if (id === 'config_leaderboard_roles_edit') return Leaderboard.showEditLeaderboardRoleSelect(interaction, serverConfig);
     if (id === 'config_leaderboard_roles_remove') return Leaderboard.showRemoveLeaderboardRoleSelect(interaction, serverConfig);
     if (id === 'config_leaderboard_roles_test') return Leaderboard.showLeaderboardRoleTestResults(interaction, serverConfig);

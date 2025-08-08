@@ -1,6 +1,7 @@
 const { supabase } = require('../config/database');
 const { toIdString, asText } = require('./ids');
 const { getServerSyncStatus, isServerPriority } = require('./syncUtils');
+const logger = require('./logger');
 
 /**
  * Database utility functions for TrustFactor bot using Supabase
@@ -212,16 +213,18 @@ class DatabaseUtils {
                 // Server is in sync group - get summed scores across all group members
                 const { data: groupMembers } = await supabase
                     .from('sync_group_members')
-                    .select('server_id::text')
+                    .select(asText('server_id'))
                     .eq('sync_code', syncStatus.sync_code)
                     .eq('is_active', true);
                 
                 if (groupMembers && groupMembers.length > 0) {
                     const serverIds = groupMembers.map(m => m.server_id);
                     
-                    // Get summed scores across all servers in the sync group
+                    // Fetch raw scores across all servers in the sync group and aggregate in app
                     const { data, error } = await supabase
-                        .rpc('get_group_leaderboard', { group_server_ids: serverIds, limit_count: limit });
+                        .from('scores')
+                        .select('user_id::text, total_score, updated_at')
+                        .in('server_id', serverIds);
                     
                     if (error) throw error;
                     
@@ -257,7 +260,11 @@ class DatabaseUtils {
             
             // Server is not in sync group - use normal single-server leaderboard
             const { data, error } = await supabase
-                .rpc('get_server_leaderboard', { target_server_id: toIdString(serverId), limit_count: limit });
+                .from('scores')
+                .select('user_id::text, total_score, updated_at')
+                .eq('server_id', toIdString(serverId))
+                .order('total_score', { ascending: false })
+                .limit(limit);
 
             if (error) throw error;
             return data || [];
@@ -1040,7 +1047,6 @@ class DatabaseUtils {
      */
     static async assignLeaderboardRoles(serverId, guild) {
         try {
-            const logger = require('./logger');
             logger.config(`🔍 Starting leaderboard role assignment for server ${serverId}`, 'LEADERBOARD-ROLES');
             const serverConfig = await this.getServerConfig(serverId);
             const leaderboardRoles = serverConfig.leaderboard_roles || {};
@@ -1092,6 +1098,7 @@ class DatabaseUtils {
                 positiveLeaderboard, positiveRoles, guild, 'positive', positiveStrategy
             );
             results.assigned += positiveAssignments.assigned;
+            results.removed += (positiveAssignments.removed || 0);
             results.errors.push(...positiveAssignments.errors);
 
             // Process negative leaderboard roles
@@ -1102,6 +1109,7 @@ class DatabaseUtils {
                 negativeLeaderboard, negativeRoles, guild, 'negative', negativeStrategy
             );
             results.assigned += negativeAssignments.assigned;
+            results.removed += (negativeAssignments.removed || 0);
             results.errors.push(...negativeAssignments.errors);
 
             // Remove roles from users who are no longer in the top positions
@@ -1143,6 +1151,144 @@ class DatabaseUtils {
     }
 
     /**
+     * Assign auto roles to users based on configured score thresholds
+     * - For each user, assigns the highest eligible role whose threshold is <= user score
+     * - Removes all configured auto roles the user should NOT have (including when falling below minimum threshold)
+     * - Ensures users have at most one auto role from this feature at a time
+     * @param {string} serverId - Discord server ID
+     * @param {Object} guild - Discord guild object
+     * @returns {Promise<{assigned: number, removed: number, errors: string[]}>}
+     */
+    static async assignAutoRoles(serverId, guild) {
+        try {
+            logger.config(`🔍 Starting auto-role assignment for server ${serverId}`, 'AUTO-ROLES');
+
+            const serverConfig = await this.getServerConfig(serverId);
+            const autoRoles = serverConfig.auto_role_thresholds || {};
+
+            if (!autoRoles || Object.keys(autoRoles).length === 0) {
+                logger.config('❌ No auto roles configured', 'AUTO-ROLES');
+                return { assigned: 0, removed: 0, errors: [] };
+            }
+
+            // Prepare thresholds sorted ascending
+            const roleThresholds = Object.entries(autoRoles)
+                .map(([threshold, roleId]) => ({ threshold: parseInt(threshold), roleId: String(roleId) }))
+                .filter((e) => !Number.isNaN(e.threshold) && !!e.roleId)
+                .sort((a, b) => a.threshold - b.threshold);
+
+            if (roleThresholds.length === 0) {
+                return { assigned: 0, removed: 0, errors: [] };
+            }
+
+            const minThreshold = roleThresholds[0].threshold;
+
+            // Build set of all configured auto role IDs that exist in guild
+            const autoRoleIds = roleThresholds
+                .map(rt => rt.roleId)
+                .filter(roleId => guild.roles.cache.has(roleId));
+
+            // Collect users who currently have any auto role
+            const usersWithAutoRoles = new Set();
+            for (const roleId of autoRoleIds) {
+                const role = guild.roles.cache.get(roleId);
+                if (!role) continue;
+                for (const [memberId] of role.members) {
+                    usersWithAutoRoles.add(String(memberId));
+                }
+            }
+
+            // Fetch users who meet at least the minimum threshold (potential new assignments)
+            let thresholdQuery = supabase
+                .from('scores')
+                .select('user_id::text')
+                .eq('server_id', toIdString(serverId));
+            if (minThreshold >= 0) {
+                thresholdQuery = thresholdQuery.gte('total_score', minThreshold);
+            }
+            const { data: aboveMin, error: thresholdErr } = await thresholdQuery;
+            if (thresholdErr) throw thresholdErr;
+
+            // Union of candidates: those already holding auto roles or above minimum threshold
+            const candidateUserIds = new Set((aboveMin || []).map(r => String(r.user_id)));
+            for (const uid of usersWithAutoRoles) candidateUserIds.add(uid);
+
+            // Fetch current scores for all candidates
+            const candidateList = Array.from(candidateUserIds);
+            let scoresByUser = new Map();
+            if (candidateList.length > 0) {
+                const { data: scoreRows, error: scoresErr } = await supabase
+                    .from('scores')
+                    .select('user_id::text, total_score')
+                    .eq('server_id', toIdString(serverId))
+                    .in('user_id', candidateList);
+                if (scoresErr) throw scoresErr;
+                for (const row of scoreRows || []) {
+                    scoresByUser.set(String(row.user_id), row.total_score || 0);
+                }
+            }
+
+            const results = { assigned: 0, removed: 0, errors: [] };
+
+            for (const userId of candidateList) {
+                try {
+                    const score = scoresByUser.get(userId) ?? 0;
+
+                    // Determine highest eligible role for this user's score (if any)
+                    const eligible = roleThresholds
+                        .filter((rt) => score >= rt.threshold)
+                        .sort((a, b) => b.threshold - a.threshold)[0] || null;
+                    const targetRoleId = eligible ? eligible.roleId : null;
+
+                    // Fetch member if in guild
+                    let member;
+                    try {
+                        member = await guild.members.fetch(userId);
+                    } catch {
+                        continue; // Not in guild
+                    }
+
+                    // Ensure only the target role is present among auto roles
+                    for (const roleId of autoRoleIds) {
+                        const hasRole = member.roles.cache.has(roleId);
+                        if (roleId === targetRoleId) {
+                            // Should have this one
+                            if (!hasRole) {
+                                const role = guild.roles.cache.get(roleId);
+                                if (role) {
+                                    await member.roles.add(roleId, eligible ? `Auto role threshold met (${eligible.threshold} pts)` : 'Auto role sync');
+                                    results.assigned++;
+                                    logger.config(`✅ Assigned role ${role.name} to ${member.user.tag} (${score} pts)`, 'AUTO-ROLES');
+                                }
+                            }
+                        } else if (hasRole) {
+                            // Should not have this one anymore
+                            const role = guild.roles.cache.get(roleId);
+                            try {
+                                await member.roles.remove(roleId, targetRoleId ? 'Superseded by higher threshold role' : 'No longer meets auto role threshold');
+                                results.removed++;
+                                if (role) {
+                                    logger.config(`🗑️ Removed role ${role.name} from ${member.user.tag} (${score} pts)`, 'AUTO-ROLES');
+                                }
+                            } catch (removeErr) {
+                                results.errors.push(removeErr.message);
+                            }
+                        }
+                    }
+                } catch (assignErr) {
+                    results.errors.push(assignErr.message);
+                }
+            }
+
+            logger.config(`🎯 Auto-role sync complete: ${results.assigned} assigned, ${results.removed} removed, ${results.errors.length} errors`, 'AUTO-ROLES');
+            return results;
+        } catch (error) {
+            console.error('Error assigning auto roles:', error);
+            return { assigned: 0, removed: 0, errors: [error.message] };
+        }
+    }
+
+    /**
      * Filter leaderboard entries to only include users who are members of the guild
      * @param {Array} leaderboard - Array of leaderboard entries
      * @param {Object} guild - Discord guild object
@@ -1175,7 +1321,7 @@ class DatabaseUtils {
      * @returns {Promise<Object>} Assignment results
      */
     static async processLeaderboardRoles(leaderboard, roles, guild, type, strategy) {
-        const results = { assigned: 0, errors: [] };
+        const results = { assigned: 0, removed: 0, errors: [] };
         
         for (let i = 0; i < leaderboard.length; i++) {
             const entry = leaderboard[i];
@@ -1194,8 +1340,8 @@ class DatabaseUtils {
                         try {
                             member = await guild.members.fetch(userIdString);
                         } catch (fetchError) {
-                    logger.debug(`🌍 Global strategy: User ${entry.user_id} not in guild, skipping role assignment`, 'LEADERBOARD-ROLES');
-                            continue;
+                            logger.debug(`🌍 Global strategy: User ${entry.user_id} not in guild, skipping role assignment`, 'LEADERBOARD-ROLES');
+                            member = null; // proceed to cleanup holders below
                         }
                     } else {
                         // For server-local and global-filtered strategies, user should already be filtered to be in guild
@@ -1207,14 +1353,32 @@ class DatabaseUtils {
                     
                     logger.debug(`🔍 Member: ${member.user.tag}, Role: ${role ? role.name : 'NOT FOUND'}, Has role: ${member.roles.cache.has(roleIdString)}`, 'LEADERBOARD-ROLES');
                     
-                    if (role && !member.roles.cache.has(roleIdString)) {
-                        await member.roles.add(roleIdString, `${type} leaderboard position ${position} role assignment (${strategy})`);
-                        logger.config(`✅ Assigned ${type} role ${role.name} to ${member.user.tag} (position ${position}, ${strategy})`, 'LEADERBOARD-ROLES');
-                        results.assigned++;
-                    } else if (!role) {
+                    if (!role) {
                         logger.warn(`❌ Role ${roleIdString} not found in guild`, 'LEADERBOARD-ROLES');
                     } else {
-                        logger.debug(`ℹ️ User ${member.user.tag} already has role ${role.name}`, 'LEADERBOARD-ROLES');
+                        // Ensure only the intended position holder has this role
+                        try {
+                            const membersWithRole = role.members;
+                            const desiredUserId = member ? String(member.id) : null;
+                            for (const [holderId, holderMember] of membersWithRole) {
+                                const holderIdString = String(holderId);
+                                if (!desiredUserId || holderIdString !== desiredUserId) {
+                                    await holderMember.roles.remove(roleIdString, `${type} leaderboard reconciliation (position ${position})`);
+                                    results.removed++;
+                                    logger.config(`🗑️ Removed ${type} role ${role.name} from ${holderMember.user.tag} (not position ${position})`, 'LEADERBOARD-ROLES');
+                                }
+                            }
+                        } catch (cleanupError) {
+                            logger.warn(`Cleanup failed for role ${role.name}: ${cleanupError.message}`, 'LEADERBOARD-ROLES');
+                        }
+
+                        if (member && !member.roles.cache.has(roleIdString)) {
+                            await member.roles.add(roleIdString, `${type} leaderboard position ${position} role assignment (${strategy})`);
+                            logger.config(`✅ Assigned ${type} role ${role.name} to ${member.user.tag} (position ${position}, ${strategy})`, 'LEADERBOARD-ROLES');
+                            results.assigned++;
+                        } else if (member) {
+                            logger.debug(`ℹ️ User ${member.user.tag} already has role ${role.name}`, 'LEADERBOARD-ROLES');
+                        }
                     }
                 } catch (error) {
                     console.error(`Error assigning ${type} role to user ${entry.user_id}:`, error);

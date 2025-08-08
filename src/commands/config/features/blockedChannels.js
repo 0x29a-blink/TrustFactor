@@ -76,7 +76,7 @@ async function startBlockedChannelAddProcess(interaction) {
 
     const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('config_blocked_channels_cancel_add').setLabel('❌ Cancel').setStyle(ButtonStyle.Secondary));
 
-    await interaction.update({ embeds: [embed], components: [row] });
+    await updateInteraction(interaction, { embeds: [embed], components: [row] });
 
     const userId = interaction.user.id;
     const channelId = interaction.channel.id;
@@ -170,7 +170,7 @@ async function showRemoveBlockedChannelSelect(interaction, serverConfig) {
   try {
     const blockedChannels = await DatabaseUtils.getBlockedChannels(interaction.guild.id);
     if (blockedChannels.length === 0) {
-      await interaction.update({ content: '❌ No blocked channels configured to remove.', embeds: [], components: [] });
+      await updateInteraction(interaction, { content: '❌ No blocked channels configured to remove.', embeds: [], components: [] });
       return;
     }
     const embed = new EmbedBuilder().setTitle('🗑️ Remove Blocked Channel').setDescription('Select a channel to remove from the blocked list:').setColor('#ff6b6b');

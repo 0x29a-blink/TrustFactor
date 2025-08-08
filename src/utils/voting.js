@@ -426,6 +426,8 @@ class VotingUtils {
                 const guild = client.guilds.cache.get(pendingVote.server_id);
                 if (guild) {
                     await DatabaseUtils.assignLeaderboardRoles(pendingVote.server_id, guild);
+                    // Also update auto roles in case thresholds are crossed
+                    await DatabaseUtils.assignAutoRoles(pendingVote.server_id, guild);
                 }
             } catch (roleError) {
                 console.error('Error assigning leaderboard roles:', roleError);

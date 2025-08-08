@@ -1,6 +1,5 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags } = require('discord.js');
 const DatabaseUtils = require('../../../utils/database');
-const { supabase } = require('../../../config/database');
 const { updateInteraction } = require('../ui');
 const { updateServerConfig, logConfigChange } = require('../services/configService');
 
@@ -185,14 +184,10 @@ async function showAutoRoleTestResults(interaction, serverConfig) {
     return;
   }
 
-  const { data: topUsers, error } = await supabase
-    .from('users')
-    .select('user_id::text, total_score')
-    .eq('server_id', interaction.guild.id)
-    .order('total_score', { ascending: false })
-    .limit(10);
-
-  if (error) {
+  let topUsers = [];
+  try {
+    topUsers = await DatabaseUtils.getLeaderboard(interaction.guild.id, 10);
+  } catch (err) {
     await updateInteraction(interaction, { content: '❌ Error fetching user data for testing.', components: [] });
     return;
   }
@@ -356,6 +351,11 @@ async function handleAddAutoRoleModal(interaction, serverId) {
   await updateServerConfig(serverId, { auto_role_thresholds: updatedAutoRoles });
   await logConfigChange(interaction, 'Auto Roles', `Added role configuration`, `${threshold} points → @${role.name}`);
 
+  // Kick off auto-role assignment to immediately apply to eligible users
+  try {
+    await DatabaseUtils.assignAutoRoles(serverId, interaction.guild);
+  } catch (_) {}
+
   const embed = new EmbedBuilder()
     .setColor('#00ff00')
     .setTitle('✅ Auto Role Added')
@@ -393,6 +393,10 @@ async function handleEditAutoRoleModal(interaction, serverId) {
     `${newThreshold} points → @${role ? role.name : 'Unknown Role'}`,
   );
   const updatedConfig = await DatabaseUtils.getServerConfig(serverId);
+  // Re-run assignment with updated thresholds
+  try {
+    await DatabaseUtils.assignAutoRoles(serverId, interaction.guild);
+  } catch (_) {}
   await showAutoRolesConfig(interaction, updatedConfig);
 }
 

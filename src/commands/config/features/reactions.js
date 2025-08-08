@@ -186,13 +186,13 @@ async function removeReaction(interaction, serverConfig, emoji) {
     if (removed) {
       const successEmbed = new EmbedBuilder().setColor('#00ff00').setTitle('✅ Reaction Removed Successfully!').setDescription(`**${emoji}** is no longer configured for reaction point awards`).addFields({ name: '🎉 All Set!', value: 'Users can still react with this emoji, but no points will be awarded.', inline: false });
       const successRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('config_reactions').setLabel('← Back to Reactions').setStyle(ButtonStyle.Primary));
-      await interaction.update({ embeds: [successEmbed], components: [successRow] });
+      await updateInteraction(interaction, { embeds: [successEmbed], components: [successRow] });
     } else {
-      await interaction.update({ content: `❌ Reaction ${emoji} was not found in the configuration.`, embeds: [], components: [] });
+      await updateInteraction(interaction, { content: `❌ Reaction ${emoji} was not found in the configuration.`, embeds: [], components: [] });
     }
   } catch (error) {
     logger.errorWithStack('Error removing reaction', error, 'REACTIONS');
-    await interaction.update({ content: '❌ Error removing reaction. Please try again.', embeds: [], components: [] });
+    await updateInteraction(interaction, { content: '❌ Error removing reaction. Please try again.', embeds: [], components: [] });
   }
 }
 

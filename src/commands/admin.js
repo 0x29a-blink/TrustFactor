@@ -218,6 +218,8 @@ async function handleScoreAdjust(interaction, serverId) {
         const guild = interaction.guild;
         if (guild) {
             await DatabaseUtils.assignLeaderboardRoles(serverId, guild);
+            // Also update auto roles since score changed
+            await DatabaseUtils.assignAutoRoles(serverId, guild);
         }
     } catch (roleError) {
         console.error('Error assigning leaderboard roles:', roleError);
@@ -294,6 +296,8 @@ async function handleScoreSet(interaction, serverId) {
         const guild = interaction.guild;
         if (guild) {
             await DatabaseUtils.assignLeaderboardRoles(serverId, guild);
+            // Also update auto roles since score was set
+            await DatabaseUtils.assignAutoRoles(serverId, guild);
         }
     } catch (roleError) {
         console.error('Error assigning leaderboard roles:', roleError);

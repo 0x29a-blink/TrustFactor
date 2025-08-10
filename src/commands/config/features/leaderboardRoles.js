@@ -251,16 +251,25 @@ async function showLeaderboardRoleTestResults(interaction, serverConfig) {
     const positiveStrategy = assignmentStrategy.positive || 'server-local';
     const negativeStrategy = assignmentStrategy.negative || 'server-local';
 
-    const leaderboard = await DatabaseUtils.getLeaderboard(serverId, 100);
-    let positiveLeaderboard = leaderboard.filter((e) => e.total_score > 0).slice(0, 10);
-    let negativeLeaderboard = leaderboard.filter((e) => e.total_score < 0).sort((a, b) => a.total_score - b.total_score).slice(0, 10);
+    // Mirror assignment logic: choose source based on strategy, filter before slicing
+    const globalLeaderboard = await DatabaseUtils.getLeaderboard(serverId, 300);
+    const serverOnlyLeaderboard = (positiveStrategy === 'server-local' || negativeStrategy === 'server-local')
+      ? await DatabaseUtils.getServerOnlyLeaderboard(serverId, 300)
+      : null;
 
+    let positiveSource = (positiveStrategy === 'server-local') ? (serverOnlyLeaderboard || []) : globalLeaderboard;
+    let positiveLeaderboard = positiveSource.filter((e) => e.total_score > 0);
     if (positiveStrategy === 'server-local' || positiveStrategy === 'global-filtered') {
       positiveLeaderboard = await filterLeaderboardForGuild(positiveLeaderboard, interaction.guild);
     }
+    positiveLeaderboard = positiveLeaderboard.slice(0, 10);
+
+    let negativeSource = (negativeStrategy === 'server-local') ? (serverOnlyLeaderboard || []) : globalLeaderboard;
+    let negativeLeaderboard = negativeSource.filter((e) => e.total_score < 0).sort((a, b) => a.total_score - b.total_score);
     if (negativeStrategy === 'server-local' || negativeStrategy === 'global-filtered') {
       negativeLeaderboard = await filterLeaderboardForGuild(negativeLeaderboard, interaction.guild);
     }
+    negativeLeaderboard = negativeLeaderboard.slice(0, 10);
 
     let positiveTestResults = '';
     for (let i = 0; i < positiveLeaderboard.length; i++) {

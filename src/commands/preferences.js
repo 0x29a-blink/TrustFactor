@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const DatabaseUtils = require('../utils/database');
+const logger = require('../utils/logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -93,7 +94,7 @@ module.exports = {
             }
 
         } catch (error) {
-            console.error('Error in preferences command:', error);
+            logger.errorWithStack('Error in preferences command', error, 'PREFERENCES');
             await interaction.reply({
                 content: '❌ An error occurred while managing your preferences. Please try again.',
                 flags: MessageFlags.Ephemeral

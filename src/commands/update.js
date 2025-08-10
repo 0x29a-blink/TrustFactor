@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags, PermissionFlagsBits } = require('discord.js');
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const logger = require('../utils/logger');
@@ -9,12 +9,30 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('update')
         .setDescription('Pull latest changes and restart the bot (Owner only)')
+        .setDMPermission(false)
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addStringOption(option =>
             option.setName('confirm')
                 .setDescription('Type "UPDATE" to confirm the update')
                 .setRequired(true)),
+    // Mark this command to be deployed only to the owner guild
+    ownerGuildOnly: true,
 
     async execute(interaction) {
+        // Ensure this command is only used in a guild and in the owner guild
+        const ownerGuildId = process.env.OWNER_GUILD_ID;
+        if (!interaction.inGuild()) {
+            return await interaction.reply({
+                content: '❌ This command can only be used within a server.',
+                flags: MessageFlags.Ephemeral
+            });
+        }
+        if (ownerGuildId && interaction.guildId !== ownerGuildId) {
+            return await interaction.reply({
+                content: '❌ This command is not available in this server.',
+                flags: MessageFlags.Ephemeral
+            });
+        }
         // Check if user is the bot owner
         const ownerId = process.env.OWNER_ID;
         if (!ownerId || interaction.user.id !== ownerId) {

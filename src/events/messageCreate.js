@@ -109,12 +109,13 @@ module.exports = {
                 pointChange: points,
                 reason: reasonText,
                 votesNeeded: VotingUtils.calculateRequiredVotes(serverConfig, points),
-                expiresAt: new Date(Date.now() + (serverConfig.voting_timeout * 60 * 1000))
+                expiresAt: new Date(Date.now() + (serverConfig.voting_timeout * 60 * 1000)),
+                voteMethod: 'reply'
             };
             
             const pendingVote = await DatabaseUtils.createPendingVote(voteData);
             
-            logger.vote(`Created pending vote from reply: ${(message.author.globalName || message.author.username)} wants to award ${points} points to ${(originalMessage.author.globalName || originalMessage.author.username)}`, 'MESSAGE');
+            logger.vote(`Created pending vote from reply: ${(message.author.globalName || message.author.username)} wants to ${points > 0 ? 'award' : 'deduct'} ${Math.abs(points)} points ${points > 0 ? 'to' : 'from'} ${(originalMessage.author.globalName || originalMessage.author.username)}`, 'MESSAGE');
             
             // Add confirmation reaction to show the bot detected the award request
             await message.react('👀');
@@ -130,8 +131,10 @@ module.exports = {
                 try {
                     const currentVote = await DatabaseUtils.getPendingVote(message.id);
                     if (currentVote && currentVote.status === 'pending') {
-                        await DatabaseUtils.updateVoteStatus(currentVote.id, 'expired');
-                        await VotingUtils.handleExpiredVote(currentVote, message);
+                        const expired = await DatabaseUtils.atomicExpireVote(currentVote.id);
+                        if (expired) {
+                            await VotingUtils.handleExpiredVote(currentVote, message.client);
+                        }
                     }
                 } catch (error) {
                     logger.errorWithStack('Error handling vote expiration', error, 'MESSAGE');

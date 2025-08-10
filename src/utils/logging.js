@@ -33,8 +33,23 @@ class AuditLogger {
                 .setFooter({ text: `Server: ${serverId}` });
 
             await this.sendLogMessage(client, serverConfig.log_channel, embed);
+
+            // Persist to audit_log (best-effort)
+            try {
+                const { supabase } = require('../config/database');
+            await supabase.from('audit_log').insert({
+                    server_id: String(serverId),
+                    admin_id: String(data.awardedBy || data.proposedBy || '0'),
+                    action: data.method || 'Voting',
+                    target_user_id: String(data.targetUserId),
+                    old_values: null,
+                    new_values: { points: data.points, new_total: data.newTotal },
+                    reason: data.reason || data.proposalReason || null
+                });
+            } catch (_) { /* ignore */ }
         } catch (error) {
-            console.error('Error logging point award:', error);
+            const logger = require('./logger');
+            logger.errorWithStack('Error logging point award', error, 'AUDIT');
         }
     }
 
@@ -63,8 +78,23 @@ class AuditLogger {
                 .setFooter({ text: `Vote ID: ${data.voteId}` });
 
             await this.sendLogMessage(client, serverConfig.log_channel, embed);
+
+            // Persist to audit_log (best-effort)
+            try {
+                const { supabase } = require('../config/database');
+            await supabase.from('audit_log').insert({
+                    server_id: String(serverId),
+                    admin_id: String(data.proposedBy || '0'),
+                    action: data.approved ? 'Vote Approved' : 'Vote Rejected',
+                    target_user_id: String(data.targetUserId || '0'),
+                    old_values: null,
+                    new_values: { approve_count: data.approveCount, threshold: data.threshold },
+                    reason: data.proposalReason || data.reason || null
+                });
+            } catch (_) { /* ignore */ }
         } catch (error) {
-            console.error('Error logging vote event:', error);
+            const logger = require('./logger');
+            logger.errorWithStack('Error logging vote event', error, 'AUDIT');
         }
     }
 
@@ -93,7 +123,8 @@ class AuditLogger {
 
             await this.sendLogMessage(client, serverConfig.log_channel, embed);
         } catch (error) {
-            console.error('Error logging config change:', error);
+            const logger = require('./logger');
+            logger.errorWithStack('Error logging config change', error, 'AUDIT');
         }
     }
 
@@ -122,7 +153,8 @@ class AuditLogger {
 
             await this.sendLogMessage(client, serverConfig.log_channel, embed);
         } catch (error) {
-            console.error('Error logging admin override:', error);
+            const logger = require('./logger');
+            logger.errorWithStack('Error logging admin override', error, 'AUDIT');
         }
     }
 
@@ -150,7 +182,8 @@ class AuditLogger {
 
             await this.sendLogMessage(client, serverConfig.log_channel, embed);
         } catch (error) {
-            console.error('Error logging score reset:', error);
+            const logger = require('./logger');
+            logger.errorWithStack('Error logging score reset', error, 'AUDIT');
         }
     }
 
@@ -179,7 +212,8 @@ class AuditLogger {
 
             await this.sendLogMessage(client, serverConfig.log_channel, embed);
         } catch (error) {
-            console.error('Error logging database reset:', error);
+            const logger = require('./logger');
+            logger.errorWithStack('Error logging database reset', error, 'AUDIT');
         }
     }
 
@@ -196,7 +230,8 @@ class AuditLogger {
         try {
             const channel = await client.channels.fetch(channelId);
             if (!channel || !channel.isTextBased()) {
-                console.warn(`Log channel ${channelId} not found or not text-based`);
+                const logger = require('./logger');
+                logger.warn(`Log channel ${channelId} not found or not text-based`, 'AUDIT');
                 await this.handleLogChannelError(client, channelId, 'Channel not found or not text-based', fallbackContext);
                 return;
             }
@@ -208,15 +243,19 @@ class AuditLogger {
             // Handle specific Discord API errors for missing/deleted channels
             if (error.code === 10003) { // Unknown Channel
                 errorReason = 'Log channel was deleted or does not exist';
-                console.warn(`Log channel ${channelId} no longer exists (deleted). Skipping log message.`);
+                const logger = require('./logger');
+                logger.warn(`Log channel ${channelId} no longer exists (deleted). Skipping log message.`, 'AUDIT');
             } else if (error.code === 50001) { // Missing Access
                 errorReason = 'Bot does not have access to the log channel';
-                console.warn(`No access to log channel ${channelId}. Skipping log message.`);
+                const logger = require('./logger');
+                logger.warn(`No access to log channel ${channelId}. Skipping log message.`, 'AUDIT');
             } else if (error.code === 50013) { // Missing Permissions
                 errorReason = 'Bot lacks permission to send messages in the log channel';
-                console.warn(`Missing permissions for log channel ${channelId}. Skipping log message.`);
+                const logger = require('./logger');
+                logger.warn(`Missing permissions for log channel ${channelId}. Skipping log message.`, 'AUDIT');
             } else {
-                console.error(`Error sending log message to channel ${channelId}:`, error);
+                const logger = require('./logger');
+                logger.errorWithStack(`Error sending log message to channel ${channelId}`, error, 'AUDIT');
             }
             
             await this.handleLogChannelError(client, channelId, errorReason, fallbackContext);
@@ -252,7 +291,8 @@ class AuditLogger {
         try {
             await fallbackChannel.send({ content: `${fallbackUser.toString()}, an error occurred while sending a log message to channel ${channelId}.`, embeds: [embed] });
         } catch (error) {
-            console.error('Error sending fallback notification:', error);
+            const logger = require('./logger');
+            logger.errorWithStack('Error sending fallback notification', error, 'AUDIT');
         }
     }
 
@@ -283,7 +323,8 @@ class AuditLogger {
 
             await this.sendLogMessage(client, serverConfig.log_channel, embed, fallbackContext);
         } catch (error) {
-            console.error('Error logging custom event:', error);
+            const logger = require('./logger');
+            logger.errorWithStack('Error logging custom event', error, 'AUDIT');
         }
     }
 }

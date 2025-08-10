@@ -3,15 +3,47 @@ const { supabase, testConnection } = require('../config/database');
 const { initializeSyncSystem } = require('../utils/syncHandler');
 const logger = require('../utils/logger');
 
+async function getTotalGuildCount(client) {
+    if (client.shard) {
+        try {
+            const counts = await client.shard.fetchClientValues('guilds.cache.size');
+            return (counts || []).reduce((a, b) => a + (Number(b) || 0), 0);
+        } catch (_) {
+            return client.guilds.cache.size;
+        }
+    }
+    return client.guilds.cache.size;
+}
+
+async function isPrimaryShard(client) {
+    if (!client.shard) return true;
+    try {
+        // Determine the lowest shard id as the primary coordinator
+        const ids = await client.shard.fetchClientValues('shard.ids');
+        // ids is an array of arrays (each client has .ids array); pick min across
+        const flat = (ids || []).flat().map(Number).filter(Number.isFinite);
+        const minId = flat.length ? Math.min(...flat) : 0;
+        const myId = client.shard.ids?.[0] ?? 0;
+        return myId === minId;
+    } catch (_) {
+        // Fallback: treat shard 0 as primary
+        const myId = client.shard.ids?.[0] ?? 0;
+        return myId === 0;
+    }
+}
+
 module.exports = {
     name: Events.ClientReady,
     once: true,
     async execute(client) {
         logger.lifecycle(`TrustFactor Bot is ready! Logged in as ${client.user.tag}`, 'STARTUP');
-        logger.info(`Serving ${client.guilds.cache.size} servers`, 'STARTUP');
+        const totalGuilds = await getTotalGuildCount(client);
+        logger.info(`Serving ${totalGuilds} servers${client.shard ? ` across ${client.shard.count} shard(s)` : ''}`, 'STARTUP');
         
-        // Display detailed guild information on startup
-        await displayGuildList(client);
+        // Display detailed guild information on startup (primary shard only)
+        if (await isPrimaryShard(client)) {
+            await displayGuildList(client);
+        }
         
         // Set bot activity status
         client.user.setActivity('community scores', { type: 'WATCHING' });
@@ -26,20 +58,20 @@ module.exports = {
                 return;
             }
             
-            // Initialize sync system
-            await initializeSyncSystem();
-            
-            // Load and resume tracking all pending votes
+            // Initialize sync system (primary shard only)
+            if (await isPrimaryShard(client)) {
+                await initializeSyncSystem();
+            }
+
+            // Per-shard maintenance tasks scoped to this shard's guilds
             await loadPendingVotes(client);
-            
-            // Clean up expired votes on startup
             await cleanupExpiredVotes(client);
-            
-            // Set up periodic cleanup every 5 minutes
+
+            // Set up periodic cleanup every 5 minutes for this shard's guilds
             setInterval(async () => {
                 await cleanupExpiredVotes(client);
             }, 5 * 60 * 1000); // 5 minutes
-            
+
             logger.info('Periodic vote expiration check enabled (every 5 minutes)', 'STARTUP');
             
         } catch (error) {
@@ -157,7 +189,25 @@ async function cleanupExpiredVotes(client) {
         // First, get the expired votes before updating them
         const { data: expiredVotes, error: selectError } = await supabase
             .from('pending_votes')
-            .select('*')
+            .select(`
+                id,
+                message_id::text,
+                original_message_id::text,
+                channel_id::text,
+                proposer_id::text,
+                target_user_id::text,
+                server_id::text,
+                point_change,
+                reason,
+                vote_method,
+                expires_at,
+                status,
+                required_votes,
+                approve_count,
+                reject_count,
+                created_at,
+                updated_at
+            `)
             .eq('status', 'pending')
             .lt('expires_at', new Date().toISOString());
         

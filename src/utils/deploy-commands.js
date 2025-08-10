@@ -11,6 +11,7 @@ const resolveEnv = (base) => process.env[`${base}_${SUFFIX}`] ?? process.env[bas
 // Get bot token and client ID from environment
 const token = resolveEnv('DISCORD_TOKEN');
 const clientId = resolveEnv('CLIENT_ID');
+const ownerGuildId = resolveEnv('OWNER_GUILD_ID');
 
 if (!token) {
     const logger = require('./logger');
@@ -26,7 +27,8 @@ if (!clientId) {
 }
 
 // Load all commands
-const commands = [];
+const globalCommands = [];
+const ownerGuildOnlyCommands = [];
 const commandsPath = path.join(__dirname, '..', 'commands');
 const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
 
@@ -35,9 +37,14 @@ for (const file of commandFiles) {
     const command = require(filePath);
     
     if ('data' in command && 'execute' in command) {
-        commands.push(command.data.toJSON());
+        const json = command.data.toJSON();
+        if (command.ownerGuildOnly) {
+            ownerGuildOnlyCommands.push(json);
+        } else {
+            globalCommands.push(json);
+        }
         const logger3 = require('./logger');
-        logger3.info(`✅ Loaded command: ${command.data.name}`, 'DEPLOY');
+        logger3.info(`✅ Loaded command: ${command.data.name}${command.ownerGuildOnly ? ' (guild-only)' : ''}`, 'DEPLOY');
     } else {
         console.log(`⚠️ Command at ${filePath} is missing required "data" or "execute" property.`);
     }
@@ -50,18 +57,41 @@ const rest = new REST().setToken(token);
 async function deployCommands() {
     try {
         const logger4 = require('./logger');
-        logger4.info(`🚀 Started refreshing ${commands.length} application (/) commands.`, 'DEPLOY');
+        const totalCount = globalCommands.length + ownerGuildOnlyCommands.length;
+        logger4.info(`🚀 Started refreshing ${totalCount} application (/) commands.`, 'DEPLOY');
 
         // Register commands globally (available in all servers)
-        const data = await rest.put(
+        const globalData = await rest.put(
             Routes.applicationCommands(clientId),
-            { body: commands },
+            { body: globalCommands },
         );
 
         const logger5 = require('./logger');
-        logger5.info(`✅ Successfully reloaded ${data.length} application (/) commands.`, 'DEPLOY');
-        logger5.info('📝 Registered commands:', 'DEPLOY');
-        data.forEach(cmd => logger5.info(`  - /${cmd.name}: ${cmd.description}`,'DEPLOY'));
+        logger5.info(`✅ Reloaded ${globalData.length} global application commands.`, 'DEPLOY');
+        if (globalData.length > 0) {
+            logger5.info('📝 Global commands:', 'DEPLOY');
+            globalData.forEach(cmd => logger5.info(`  - /${cmd.name}: ${cmd.description}`,'DEPLOY'));
+        }
+
+        // Register guild-only commands to the owner guild if provided
+        if (ownerGuildOnlyCommands.length > 0) {
+            if (!ownerGuildId) {
+                logger5.warn('OWNER_GUILD_ID not set; skipping deployment of guild-only commands', 'DEPLOY');
+            } else {
+                try {
+                    const guildData = await rest.put(
+                        Routes.applicationGuildCommands(clientId, ownerGuildId),
+                        { body: ownerGuildOnlyCommands },
+                    );
+                    logger5.info(`✅ Reloaded ${guildData.length} guild-only commands for guild ${ownerGuildId}.`, 'DEPLOY');
+                    logger5.info('📝 Guild-only commands:', 'DEPLOY');
+                    guildData.forEach(cmd => logger5.info(`  - /${cmd.name}: ${cmd.description}`,'DEPLOY'));
+                } catch (guildError) {
+                    logger5.warn(`Skipping guild-only command deployment to guild ${ownerGuildId}: ${guildError.message}`, 'DEPLOY');
+                    logger5.debug(`Guild deploy error stack: ${guildError.stack}`, 'DEPLOY');
+                }
+            }
+        }
         
     } catch (error) {
         const logger6 = require('./logger');

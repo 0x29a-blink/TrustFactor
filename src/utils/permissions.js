@@ -4,8 +4,8 @@
 
 const { PermissionFlagsBits } = require('discord.js');
 
-// Get owner ID from environment variable
-const OWNER_ID = process.env.OWNER_ID || '160853902726660096';
+// Get owner ID from environment variable (no hardcoded fallback)
+const OWNER_ID = process.env.OWNER_ID;
 
 /**
  * Check if user has admin permissions
@@ -23,7 +23,7 @@ function isAdmin(member) {
  * @returns {string} Permission level: 'owner', 'admin', or 'user'
  */
 function getPermissionLevel(member) {
-    if (member.user.id === OWNER_ID) return 'owner';
+    if (OWNER_ID && member.user.id === OWNER_ID) return 'owner';
     if (isAdmin(member)) return 'admin';
     return 'user';
 }
@@ -35,7 +35,7 @@ function getPermissionLevel(member) {
  * @returns {boolean} True if testing mode applies
  */
 function isTestingMode(member, serverTestingMode) {
-    const userIsOwner = member.user.id === OWNER_ID;
+    const userIsOwner = OWNER_ID && member.user.id === OWNER_ID;
     if (serverTestingMode) {
         return userIsOwner;
     }

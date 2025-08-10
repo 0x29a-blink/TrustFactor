@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageFlags } = require('discord.js');
 const DatabaseUtils = require('../utils/database');
+const logger = require('../utils/logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -59,7 +60,7 @@ module.exports = {
                 // Prevent duplicate processing
                 const interactionKey = `${buttonInteraction.id}_${buttonInteraction.customId}`;
                 if (processingInteractions.has(interactionKey)) {
-                    console.warn('Interaction already being processed:', interactionKey);
+                        logger.debug(`Interaction already being processed: ${interactionKey}`, 'LEADERBOARD');
                     return;
                 }
                 processingInteractions.add(interactionKey);
@@ -67,7 +68,7 @@ module.exports = {
                 try {
                     // Check if interaction is still valid
                     if (buttonInteraction.replied || buttonInteraction.deferred) {
-                        console.warn('Button interaction already handled:', buttonInteraction.customId);
+                        logger.debug(`Button interaction already handled: ${buttonInteraction.customId}`, 'LEADERBOARD');
                         return;
                     }
 
@@ -106,7 +107,7 @@ module.exports = {
                             filterState.limit = Math.max(5, filterState.limit - 5);
                             break;
                         default:
-                            console.warn('Unknown leaderboard button interaction:', buttonInteraction.customId);
+                            logger.warn(`Unknown leaderboard button interaction: ${buttonInteraction.customId}`, 'LEADERBOARD');
                             await buttonInteraction.followUp({
                                 content: '❌ Unknown button action.',
                                 flags: MessageFlags.Ephemeral
@@ -123,7 +124,6 @@ module.exports = {
                         components: newComponents 
                     });
                 } catch (error) {
-                    const logger = require('../utils/logger');
                     logger.errorWithStack('Error handling button interaction', error, 'LEADERBOARD');
                     
                     // Try to send a followup error message
@@ -141,8 +141,7 @@ module.exports = {
                             });
                         }
                     } catch (replyError) {
-                        const logger2 = require('../utils/logger');
-                        logger2.debug(`Failed to send error reply: ${replyError.message}`, 'LEADERBOARD');
+                        logger.debug(`Failed to send error reply: ${replyError.message}`, 'LEADERBOARD');
                     }
                 } finally {
                     // Always remove from processing set
@@ -151,7 +150,6 @@ module.exports = {
             });
 
             collector.on('end', async (collected, reason) => {
-                const logger = require('../utils/logger');
                 logger.debug(`Leaderboard collector ended. Reason: ${reason}, Collected: ${collected.size}`, 'LEADERBOARD');
                 
                 // Disable all buttons when collector expires
@@ -168,15 +166,13 @@ module.exports = {
 
                     await response.edit({ components: disabledComponents });
                 } catch (error) {
-                    const logger2 = require('../utils/logger');
-                    logger2.debug(`Failed to disable buttons on collector end: ${error.message}`, 'LEADERBOARD');
+                    logger.debug(`Failed to disable buttons on collector end: ${error.message}`, 'LEADERBOARD');
                     // This is expected if the interaction has expired
                 }
             });
 
         } catch (error) {
-            const logger3 = require('../utils/logger');
-            logger3.errorWithStack('Error fetching leaderboard', error, 'LEADERBOARD');
+            logger.errorWithStack('Error fetching leaderboard', error, 'LEADERBOARD');
             await interaction.reply({
                 content: '❌ There was an error fetching the leaderboard. Please try again.',
                 flags: MessageFlags.Ephemeral

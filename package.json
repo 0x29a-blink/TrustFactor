@@ -4,9 +4,9 @@
   "description": "A community-driven Discord bot for tracking user scores through voting",
   "main": "index.js",
   "scripts": {
-    "start": "node src/index.js",
+    "start": "node src/sharder.js",
     "start:restart": "node restart.js",
-    "dev": "nodemon src/index.js",
+    "dev": "nodemon src/sharder.js",
     "test": "jest",
     "migrate": "echo Use Supabase CLI migrations instead (see README) && exit 0",
     "deploy-commands": "node src/utils/deploy-commands.js",
@@ -33,6 +33,7 @@
   "author": "TrustFactor Bot Team",
   "license": "MIT",
   "dependencies": {
+    "puppeteer": "^22.15.0",
     "discord.js": "^14.14.1",
     "@supabase/supabase-js": "^2.39.7",
     "dotenv": "^16.4.1"

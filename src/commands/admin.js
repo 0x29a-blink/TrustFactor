@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags } =
 const DatabaseUtils = require('../utils/database');
 const AuditLogger = require('../utils/logging');
 const { supabase } = require('../config/database');
+const logger = require('../utils/logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -109,7 +110,7 @@ module.exports = {
                     break;
             }
         } catch (error) {
-            console.error('Error in admin command:', error);
+            logger.errorWithStack('Error in admin command', error, 'ADMIN');
             await interaction.reply({
                 content: '❌ There was an error executing the admin command. Please try again.',
                 flags: MessageFlags.Ephemeral
@@ -222,7 +223,7 @@ async function handleScoreAdjust(interaction, serverId) {
             await DatabaseUtils.assignAutoRoles(serverId, guild);
         }
     } catch (roleError) {
-        console.error('Error assigning leaderboard roles:', roleError);
+        logger.errorWithStack('Error assigning leaderboard roles', roleError, 'ADMIN');
         // Don't fail the admin command if role assignment fails
     }
 
@@ -300,7 +301,7 @@ async function handleScoreSet(interaction, serverId) {
             await DatabaseUtils.assignAutoRoles(serverId, guild);
         }
     } catch (roleError) {
-        console.error('Error assigning leaderboard roles:', roleError);
+        logger.errorWithStack('Error assigning leaderboard roles', roleError, 'ADMIN');
         // Don't fail the admin command if role assignment fails
     }
 
@@ -355,7 +356,7 @@ async function handleClearHistory(interaction, serverId) {
         .eq('server_id', String(serverId));
 
     if (error) {
-        console.error('Error clearing score history:', error);
+        logger.errorWithStack('Error clearing score history', error, 'ADMIN');
         return await interaction.reply({
             content: '❌ There was an error clearing the score history. Please try again.',
             flags: MessageFlags.Ephemeral
@@ -428,7 +429,7 @@ async function handleLeaderboardReset(interaction, serverId) {
         .eq('server_id', String(serverId));
 
     if (scoresError || historyError) {
-        console.error('Error resetting leaderboard:', scoresError || historyError);
+        logger.errorWithStack('Error resetting leaderboard', scoresError || historyError, 'ADMIN');
         return await interaction.reply({
             content: '❌ There was an error resetting the leaderboard. Please try again.',
             flags: MessageFlags.Ephemeral
@@ -533,7 +534,7 @@ async function handleAssignLeaderboardRoles(interaction, serverId) {
             flags: MessageFlags.Ephemeral
         });
     } catch (error) {
-        console.error('Error assigning leaderboard roles:', error);
+        logger.errorWithStack('Error assigning leaderboard roles', error, 'ADMIN');
         await interaction.editReply({
             content: '❌ There was an error assigning leaderboard roles. Please check the console for details.',
             flags: MessageFlags.Ephemeral

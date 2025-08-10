@@ -118,7 +118,7 @@ module.exports = {
                         await DatabaseUtils.assignAutoRoles(serverId, guild);
                     }
                 } catch (roleError) {
-                    console.error('Error assigning roles:', roleError);
+                    logger.errorWithStack('Error assigning roles', roleError, 'AWARD');
                 }
 
                 // Get updated score (returns a number)
@@ -237,12 +237,13 @@ module.exports = {
                 pointChange: points,
                 reason: reason,
                 votesNeeded: votesNeeded,
-                expiresAt: expiresAt
+                expiresAt: expiresAt,
+                voteMethod: 'command'
             };
             
             const pendingVote = await DatabaseUtils.createPendingVote(voteData);
             
-            logger.vote(`Created pending vote: ${(proposer.globalName || proposer.username)} wants to award ${points} points to ${(targetUser.globalName || targetUser.username)}`, 'AWARD');
+            logger.vote(`Created pending vote: ${(proposer.globalName || proposer.username)} wants to ${points > 0 ? 'award' : 'deduct'} ${Math.abs(points)} points ${points > 0 ? 'to' : 'from'} ${(targetUser.globalName || targetUser.username)}`, 'AWARD');
             
             // In reaction mode, don't auto-approve - let user manually react
             if (!serverConfig.reaction_mode && serverConfig.auto_approval !== false) {
@@ -277,7 +278,7 @@ module.exports = {
                 const updatedEmbed = new EmbedBuilder()
                     .setColor('#0099ff')
                     .setTitle('🏆 Point Award Proposal')
-                    .setDescription(`${(proposer.globalName || proposer.username)} wants to award **${points} point${points !== 1 ? 's' : ''}** to ${(targetUser.globalName || targetUser.username)}`)
+                    .setDescription(`**${proposer.globalName || proposer.username}** wants to ${points > 0 ? 'award' : 'deduct'} **${Math.abs(points)}** point${Math.abs(points) !== 1 ? 's' : ''} ${points > 0 ? 'to' : 'from'} ${targetUser}`)
                     .addFields(
                         { name: 'Reason', value: reason || 'No reason provided', inline: false },
                         { name: 'Progress', value: `${updatedVoteCounts.approveCount}/${votesNeeded} approval${votesNeeded !== 1 ? 's' : ''}`, inline: true },
@@ -319,7 +320,7 @@ module.exports = {
                             await DatabaseUtils.assignAutoRoles(serverId, guild);
                         }
                     } catch (roleError) {
-                        console.error('Error assigning roles:', roleError);
+                        logger.errorWithStack('Error assigning roles', roleError, 'AWARD');
                     }
                     
                     // Mark vote as approved

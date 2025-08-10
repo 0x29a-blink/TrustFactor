@@ -15,9 +15,10 @@ class BotProcessManager {
             return;
         }
 
-        console.log('Starting Discord bot...');
-        
-        const botProcess = spawn('node', ['src/index.js'], {
+        console.log('Starting Discord bot (sharded)...');
+
+        // Start sharder which manages worker shards running src/index.js
+        const botProcess = spawn('node', ['src/sharder.js'], {
             stdio: 'inherit',
             cwd: __dirname
         });

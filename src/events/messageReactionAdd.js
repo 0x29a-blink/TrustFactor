@@ -155,7 +155,8 @@ module.exports = {
                     ? `${emojiString} Reaction on: ${message.content}`
                     : `${emojiString} Reaction on image`,
                 votesNeeded: VotingUtils.calculateRequiredVotes(serverConfig, customReaction.point_value),
-                expiresAt: new Date(Date.now() + (serverConfig.voting_timeout * 60 * 1000))
+                expiresAt: new Date(Date.now() + (serverConfig.voting_timeout * 60 * 1000)),
+                voteMethod: 'reaction'
             };
             
             const pendingVote = await DatabaseUtils.createPendingVote(voteData);
@@ -218,17 +219,19 @@ ${messageLink}`;
                     try {
                         const currentVote = await DatabaseUtils.getPendingVote(message.id);
                         if (currentVote && currentVote.status === 'pending') {
-                            await DatabaseUtils.updateVoteStatus(currentVote.id, 'expired');
-                            await VotingUtils.handleExpiredVote(currentVote, message);
+                            const expired = await DatabaseUtils.atomicExpireVote(currentVote.id);
+                            if (expired) {
+                                await VotingUtils.handleExpiredVote(currentVote, message.client);
+                            }
                         }
                     } catch (error) {
-                        console.error('Error handling reaction-based vote expiration:', error);
+                        logger.errorWithStack('Error handling reaction-based vote expiration', error, 'REACTION');
                     }
                 }, serverConfig.voting_timeout * 60 * 1000);
             }
             
         } catch (error) {
-            console.error('Error processing reaction:', error);
+            logger.errorWithStack('Error processing reaction', error, 'REACTION');
         }
     },
 };

@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageFlags } = require('discord.js');
 const DatabaseUtils = require('../utils/database');
+const logger = require('../utils/logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -76,7 +77,7 @@ module.exports = {
                 // Prevent duplicate processing
                 const interactionKey = `${buttonInteraction.id}_${buttonInteraction.customId}`;
                 if (processingInteractions.has(interactionKey)) {
-                    console.warn('Score interaction already being processed:', interactionKey);
+                    logger.debug(`Score interaction already being processed: ${interactionKey}`, 'SCORE');
                     return;
                 }
                 processingInteractions.add(interactionKey);
@@ -84,7 +85,7 @@ module.exports = {
                 try {
                     // Check if interaction is still valid
                     if (buttonInteraction.replied || buttonInteraction.deferred) {
-                        console.warn('Score button interaction already handled:', buttonInteraction.customId);
+                        logger.debug(`Score button interaction already handled: ${buttonInteraction.customId}`, 'SCORE');
                         return;
                     }
 
@@ -127,7 +128,7 @@ module.exports = {
                             // Just refresh with current state
                             break;
                         default:
-                            console.warn('Unknown score button interaction:', buttonInteraction.customId);
+                            logger.warn(`Unknown score button interaction: ${buttonInteraction.customId}`, 'SCORE');
                             await buttonInteraction.followUp({
                                 content: '❌ Unknown button action.',
                                 flags: MessageFlags.Ephemeral
@@ -144,7 +145,7 @@ module.exports = {
                         components: newComponents 
                     });
                 } catch (error) {
-                    console.error('Error handling score button interaction:', error);
+                    logger.errorWithStack('Error handling score button interaction', error, 'SCORE');
                     
                     // Try to send a followup error message
                     try {
@@ -156,7 +157,7 @@ module.exports = {
                             });
                         }
                     } catch (replyError) {
-                        console.error('Failed to send score error reply:', replyError.message);
+                        logger.debug(`Failed to send score error reply: ${replyError.message}`, 'SCORE');
                     }
                 } finally {
                     // Always remove from processing set
@@ -165,7 +166,7 @@ module.exports = {
             });
 
             collector.on('end', async (collected, reason) => {
-                console.log(`Score collector ended. Reason: ${reason}, Collected: ${collected.size}`);
+                logger.debug(`Score collector ended. Reason: ${reason}, Collected: ${collected.size}`, 'SCORE');
                 
                 // Disable all buttons when collector expires
                 try {
@@ -181,12 +182,12 @@ module.exports = {
 
                     await response.edit({ components: disabledComponents });
                 } catch (error) {
-                    console.warn('Failed to disable score buttons on collector end:', error.message);
+                    logger.debug(`Failed to disable score buttons on collector end: ${error.message}`, 'SCORE');
                 }
             });
 
         } catch (error) {
-            console.error('Error fetching user score:', error);
+            logger.errorWithStack('Error fetching user score', error, 'SCORE');
             await interaction.reply({
                 content: '❌ There was an error fetching the score. Please try again.',
                 flags: MessageFlags.Ephemeral
@@ -216,29 +217,30 @@ async function generateScoreDisplay(interaction, scoreState) {
     
     // Filter history based on view mode
     let filteredHistory = [];
-    let title = `📊 ${targetUser.displayName}'s Score`;
+    const targetUserLabel = targetUser.globalName || targetUser.username;
+    let title = `📊 ${targetUserLabel}'s Score`;
     let color = serverConfig.embed_color || '#5865F2';
     
     switch (viewMode) {
         case 'recent':
             filteredHistory = allHistory.slice(0, 25); // Show recent 25
-            title = `📊 ${targetUser.displayName}'s Recent Activity`;
+            title = `📊 ${targetUserLabel}'s Recent Activity`;
             color = '#00ff00';
             break;
         case 'positive':
             filteredHistory = allHistory.filter(entry => entry.point_change > 0);
-            title = `📊 ${targetUser.displayName}'s Positive Changes`;
+            title = `📊 ${targetUserLabel}'s Positive Changes`;
             color = '#00ff00';
             break;
         case 'negative':
             filteredHistory = allHistory.filter(entry => entry.point_change < 0);
-            title = `📊 ${targetUser.displayName}'s Negative Changes`;
+            title = `📊 ${targetUserLabel}'s Negative Changes`;
             color = '#ff0000';
             break;
         case 'all':
         default:
             filteredHistory = allHistory;
-            title = `📊 ${targetUser.displayName}'s Complete History`;
+            title = `📊 ${targetUserLabel}'s Complete History`;
             color = serverConfig.embed_color || '#5865F2';
             break;
     }

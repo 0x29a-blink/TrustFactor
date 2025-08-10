@@ -3,6 +3,10 @@ const DatabaseUtils = require('./database');
 const AuditLogger = require('./logging');
 const logger = require('./logger');
 
+// Lightweight cooldown to avoid running expensive role syncs too frequently per server
+const roleSyncCooldownMs = 15000; // 15 seconds
+const lastRoleSyncAtByServer = new Map();
+
 /**
  * Voting system utilities for TrustFactor bot
  */
@@ -208,7 +212,7 @@ class VotingUtils {
             }
             
         } catch (error) {
-            console.error('Error handling reaction removal:', error);
+            logger.errorWithStack('Error handling reaction removal', error, 'VOTE');
         }
     }
 
@@ -223,11 +227,16 @@ class VotingUtils {
         logger.debug(`Button clicked: ${customId}, isApproval: ${isApproval}`, 'VOTE');
 
         try {
+            // Acknowledge the interaction immediately to avoid 3s timeout
+            if (!interaction.deferred && !interaction.replied) {
+                await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            }
+
             // Get pending vote
             const pendingVote = await DatabaseUtils.getPendingVote(message.id);
             
             if (!pendingVote) {
-                return await interaction.reply({
+                return await interaction.editReply({
                     content: '❌ This vote is no longer active!',
                     flags: MessageFlags.Ephemeral
                 });
@@ -236,7 +245,7 @@ class VotingUtils {
             // Check if vote has expired
             if (new Date() > new Date(pendingVote.expires_at)) {
                 await DatabaseUtils.updateVoteStatus(pendingVote.id, 'expired');
-                return await interaction.reply({
+                return await interaction.editReply({
                     content: '⏰ This vote has expired!',
                     flags: MessageFlags.Ephemeral
                 });
@@ -244,67 +253,91 @@ class VotingUtils {
 
             // Prevent recipient from voting on their own poll (proposers are allowed to vote)
             if (user.id === pendingVote.target_user_id) {
-                return await interaction.reply({
+                return await interaction.editReply({
                     content: '❌ You cannot vote on a proposal about yourself!',
                     flags: MessageFlags.Ephemeral
                 });
             }
 
-            // Check if user already has a vote
-            const existingVote = await DatabaseUtils.getUserVote(pendingVote.id, user.id);
+            // Fetch existing vote and server config concurrently to reduce latency
+            const [existingVote, serverConfig] = await Promise.all([
+                DatabaseUtils.getUserVote(pendingVote.id, user.id),
+                DatabaseUtils.getServerConfig(pendingVote.server_id)
+            ]);
             const voteType = isApproval ? 'approve' : 'reject';
             let actionMessage = '';
+            // Start from current stored counts to avoid an extra count query
+            let localApproveCount = Number(pendingVote.approve_count || 0);
+            let localRejectCount = Number(pendingVote.reject_count || 0);
             
             if (existingVote) {
                 if (existingVote.vote_type === voteType) {
                     // User clicked the same button - retract their vote
                     await DatabaseUtils.removeVote(pendingVote.id, user.id);
-                    actionMessage = `❌ Your ${voteType}al has been retracted.`;
+                    actionMessage = `❌ Your ${voteType === 'approve' ? 'approval' : 'rejection'} has been retracted.`;
+                    if (voteType === 'approve') {
+                        localApproveCount = Math.max(0, localApproveCount - 1);
+                    } else {
+                        localRejectCount = Math.max(0, localRejectCount - 1);
+                    }
                 } else {
-                    // User clicked the opposite button - switch their vote
-                    await DatabaseUtils.removeVote(pendingVote.id, user.id);
+                    // User clicked the opposite button - switch their vote (single upsert)
                     await DatabaseUtils.recordVote(pendingVote.id, user.id, voteType);
                     const oldType = existingVote.vote_type === 'approve' ? 'approval' : 'rejection';
                     const newType = voteType === 'approve' ? 'approval' : 'rejection';
                     actionMessage = `🔄 Your vote has been switched from ${oldType} to ${newType}.`;
+                    if (voteType === 'approve') {
+                        localApproveCount += 1;
+                        localRejectCount = Math.max(0, localRejectCount - 1);
+                    } else {
+                        localRejectCount += 1;
+                        localApproveCount = Math.max(0, localApproveCount - 1);
+                    }
                 }
             } else {
                 // User has no existing vote - record new vote
                 await DatabaseUtils.recordVote(pendingVote.id, user.id, voteType);
                 actionMessage = `✅ Your ${voteType === 'approve' ? 'approval' : 'rejection'} has been recorded!`;
+                if (voteType === 'approve') localApproveCount += 1; else localRejectCount += 1;
             }
             
-            // Get updated vote counts
-            const voteCounts = await DatabaseUtils.getVoteCount(pendingVote.id);
-            const serverConfig = await DatabaseUtils.getServerConfig(pendingVote.server_id);
+            // Compose local vote counts without an extra DB roundtrip
+            const voteCounts = { approveCount: localApproveCount, rejectCount: localRejectCount };
             
             // Calculate required votes based on threshold mode
             const requiredVotes = this.calculateRequiredVotes(serverConfig, pendingVote.point_change);
             
             // Check if threshold is met
             if (voteCounts.approveCount >= requiredVotes) {
-                const wasApproved = await this.approveVote(pendingVote, interaction);
-                if (!wasApproved) {
-                    // Vote was already processed by another user (race condition)
-                    actionMessage = '⚡ This vote was just approved by another user!';
-                }
+                const wasApproved = await this.approveVote(pendingVote, interaction, null, serverConfig);
+                // From the user's perspective, their vote led to or confirmed approval
+                actionMessage = '🎉 Vote approved!';
             } else {
                 // Update the embed with current vote counts
-                await this.updateVoteEmbed(interaction, pendingVote, voteCounts, requiredVotes);
+                await this.updateVoteEmbed(interaction, pendingVote, voteCounts, requiredVotes, serverConfig);
             }
 
             // Acknowledge the vote action (record/retract/switch)
-            await interaction.reply({
+            await interaction.editReply({
                 content: actionMessage,
                 flags: MessageFlags.Ephemeral
             });
 
         } catch (error) {
             logger.errorWithStack('Error handling vote button', error, 'VOTE');
-            await interaction.reply({
-                content: '❌ There was an error processing your vote!',
-                flags: MessageFlags.Ephemeral
-            });
+            try {
+                if (interaction.deferred || interaction.replied) {
+                    await interaction.editReply({
+                        content: '❌ There was an error processing your vote!',
+                        flags: MessageFlags.Ephemeral
+                    });
+                } else {
+                    await interaction.reply({
+                        content: '❌ There was an error processing your vote!',
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
+            } catch (_) { /* no-op */ }
         }
     }
 
@@ -348,29 +381,13 @@ class VotingUtils {
             }
             
             const serverConfig = await DatabaseUtils.getServerConfig(pendingVote.server_id);
-            
-            // Get target user
-            let targetUser;
-            try {
-                targetUser = await client.users.fetch(String(pendingVote.target_user_id));
-            } catch (error) {
-                logger.warn(`Could not fetch target user ${pendingVote.target_user_id}: ${error.message}`, 'VOTE');
-                targetUser = { displayName: 'Unknown User', toString: () => '@Unknown' };
-            }
-            
-            // Get proposer user
-            let proposerUser;
-            try {
-                proposerUser = await message.client.users.fetch(String(pendingVote.proposer_id));
-            } catch (error) {
-                logger.warn(`Could not fetch proposer user ${pendingVote.proposer_id}: ${error.message}`, 'VOTE');
-                proposerUser = { displayName: 'Unknown User' };
-            }
+            const targetMention = `<@${String(pendingVote.target_user_id)}>`;
+            const proposerMention = `<@${String(pendingVote.proposer_id)}>`;
             
             const embed = new EmbedBuilder()
                 .setColor(serverConfig.embed_color || '#5865F2')
                 .setTitle('🗳️ Point Award Proposal')
-                .setDescription(`**${proposerUser.displayName}** wants to ${pendingVote.point_change > 0 ? 'award' : 'deduct'} **${Math.abs(pendingVote.point_change)}** point${Math.abs(pendingVote.point_change) !== 1 ? 's' : ''} ${pendingVote.point_change > 0 ? 'to' : 'from'} ${targetUser}`)
+                .setDescription(`**${proposerMention}** wants to ${pendingVote.point_change > 0 ? 'award' : 'deduct'} **${Math.abs(pendingVote.point_change)}** point${Math.abs(pendingVote.point_change) !== 1 ? 's' : ''} ${pendingVote.point_change > 0 ? 'to' : 'from'} ${targetMention}`)
                 .addFields([
                     { name: 'Reason', value: pendingVote.reason, inline: false },
                     { name: 'Progress', value: `${voteCounts.approveCount}/${requiredVotes} approvals`, inline: true },
@@ -392,7 +409,7 @@ class VotingUtils {
      * @param {ButtonInteraction} interaction - The button interaction (optional for reactions)
      * @param {Message} message - The message (optional for reactions)
      */
-    static async approveVote(pendingVote, interaction, message = null) {
+    static async approveVote(pendingVote, interaction, message = null, serverConfig = null) {
         try {
             // Atomically approve the vote (race condition safe)
             // This will only succeed if the vote is still in 'pending' status
@@ -408,8 +425,7 @@ class VotingUtils {
             // For reaction-based votes: use message_id (the message being reacted to)
             // For reply-based votes: use original_message_id (the message being replied to)
             const tracebackMessageId = pendingVote.original_message_id || pendingVote.message_id;
-            
-            await DatabaseUtils.applyScoreChange(
+            const applyResult = await DatabaseUtils.applyScoreChange(
                 pendingVote.target_user_id,
                 pendingVote.server_id,
                 pendingVote.point_change,
@@ -425,26 +441,44 @@ class VotingUtils {
                 const client = interaction ? interaction.client : message.client;
                 const guild = client.guilds.cache.get(pendingVote.server_id);
                 if (guild) {
-                    await DatabaseUtils.assignLeaderboardRoles(pendingVote.server_id, guild);
-                    // Also update auto roles in case thresholds are crossed
-                    await DatabaseUtils.assignAutoRoles(pendingVote.server_id, guild);
+                    const now = Date.now();
+                    const last = lastRoleSyncAtByServer.get(pendingVote.server_id) || 0;
+                    if (now - last >= roleSyncCooldownMs) {
+                        lastRoleSyncAtByServer.set(pendingVote.server_id, now);
+                        // Run heavy role sync operations in background to keep interactions fast
+                        (async () => {
+                            try {
+                                await DatabaseUtils.assignLeaderboardRoles(pendingVote.server_id, guild);
+                                await DatabaseUtils.assignAutoRoles(pendingVote.server_id, guild);
+                            } catch (roleError) {
+                                logger.errorWithStack('Error assigning leaderboard/auto roles (background)', roleError, 'APPROVE');
+                            }
+                        })();
+                    } else {
+                        logger.debug(`Skipping role sync (cooldown) for server ${pendingVote.server_id}`, 'APPROVE');
+                    }
                 }
             } catch (roleError) {
-                console.error('Error assigning leaderboard roles:', roleError);
+                logger.errorWithStack('Error scheduling role sync', roleError, 'APPROVE');
                 // Don't fail the vote if role assignment fails
             }
 
             // Get updated user score for feedback
-            const newScore = await DatabaseUtils.getUserScore(pendingVote.target_user_id, pendingVote.server_id);
+            const newScore = applyResult?.total_score;
             const client = interaction ? interaction.client : message.client;
-            const targetUser = await client.users.fetch(pendingVote.target_user_id);
+            const targetUserMention = `<@${String(pendingVote.target_user_id)}>`;
 
             // Create success embed
-            const serverConfig = await DatabaseUtils.getServerConfig(pendingVote.server_id);
+            const serverConfigLocal = serverConfig || await DatabaseUtils.getServerConfig(pendingVote.server_id);
+            const isPositive = pendingVote.point_change > 0;
+            const absPoints = Math.abs(pendingVote.point_change);
+            const changeText = isPositive
+                ? `received **+${absPoints}** point${absPoints !== 1 ? 's' : ''}`
+                : `lost **${absPoints}** point${absPoints !== 1 ? 's' : ''}`;
             const successEmbed = new EmbedBuilder()
                 .setColor('#00ff00')
                 .setTitle('✅ Vote Approved!')
-                .setDescription(`${targetUser} has received **${pendingVote.point_change > 0 ? '+' : ''}${pendingVote.point_change}** point${Math.abs(pendingVote.point_change) !== 1 ? 's' : ''}`)
+                .setDescription(`${targetUserMention} has ${changeText}`)
                 .addFields([
                     { name: 'Reason', value: pendingVote.reason, inline: false },
                     { name: 'New Score', value: `${newScore} point${Math.abs(newScore) !== 1 ? 's' : ''}`, inline: true }
@@ -471,7 +505,7 @@ class VotingUtils {
                     try {
                         await message.reactions.removeAll();
                     } catch (reactionError) {
-                        console.warn('Could not remove reactions:', reactionError.message);
+                        logger.warn(`Could not remove reactions: ${reactionError.message}`, 'VOTE');
                     }
                     
                     // Add success reaction to the reply message
@@ -502,7 +536,7 @@ class VotingUtils {
                     });
                 }
             } catch (editError) {
-                console.warn('Could not edit message, sending new message instead:', editError.message);
+                logger.warn(`Could not edit message, sending new message instead: ${editError.message}`, 'VOTE');
                 // Fallback: send a new message if editing fails
                 const channel = messageToEdit.channel;
                 await channel.send({
@@ -519,14 +553,14 @@ class VotingUtils {
                 proposedBy: pendingVote.proposer_id,
                 points: pendingVote.point_change,
                 approveCount: voteCounts.approveCount,
-                threshold: voteCounts.requiredVotes || serverConfig.threshold,
+                threshold: voteCounts.requiredVotes || this.calculateRequiredVotes(serverConfigLocal, pendingVote.point_change),
                 proposalReason: pendingVote.reason
             });
 
             // Note: Success feedback is already handled above via the success embed
             // No need to call sendFeedbackMessage again as it would create duplicate messages
 
-            logger.vote(`Vote approved: ${(targetUser.globalName || targetUser.username || targetUser.displayName || 'Unknown User')} received ${pendingVote.point_change} points`, 'APPROVE');
+            logger.vote(`Vote approved: ${String(pendingVote.target_user_id)} change ${pendingVote.point_change} points (new total: ${newScore})`, 'APPROVE');
 
         } catch (error) {
             logger.errorWithStack('Error approving vote', error, 'VOTE');
@@ -543,7 +577,7 @@ class VotingUtils {
      * @param {Object} voteCounts - Current vote counts
      * @param {number} requiredVotes - Required votes for approval
      */
-    static async updateVoteEmbed(interaction, pendingVote, voteCounts, requiredVotes) {
+    static async updateVoteEmbed(interaction, pendingVote, voteCounts, requiredVotes, serverConfig) {
         try {
             // Add comprehensive null checks to prevent Discord API errors
             logger.object('Debug - pendingVote object', pendingVote, 'VOTE');
@@ -559,38 +593,16 @@ class VotingUtils {
                 return;
             }
             
-            // Convert to strings to prevent JavaScript number precision loss with Discord snowflakes
             const targetUserId = String(pendingVote.target_user_id);
             const proposerUserId = String(pendingVote.proposer_id);
-            
-            // Try to get users from guild members first (more reliable), then fallback to API fetch
-            let targetUser = interaction.guild.members.cache.get(targetUserId)?.user;
-            let proposerUser = interaction.guild.members.cache.get(proposerUserId)?.user;
-            
-            // If not in cache, try Discord API as fallback
-            if (!targetUser) {
-                try {
-                    targetUser = await interaction.client.users.fetch(targetUserId);
-                } catch (error) {
-                    logger.warn(`Could not fetch target user ${targetUserId}: ${error.message}`, 'VOTE');
-                    targetUser = { displayName: 'Unknown User', toString: () => '@Unknown' };
-                }
-            }
-            
-            if (!proposerUser) {
-                try {
-                    proposerUser = await interaction.client.users.fetch(proposerUserId);
-                } catch (error) {
-                    logger.warn(`Could not fetch proposer user ${proposerUserId}: ${error.message}`, 'VOTE');
-                    proposerUser = { displayName: 'Unknown User', toString: () => '@Unknown' };
-                }
-            }
-            const serverConfig = await DatabaseUtils.getServerConfig(pendingVote.server_id);
+            const targetMention = `<@${targetUserId}>`;
+            const proposerMention = `<@${proposerUserId}>`;
+            const cfg = serverConfig || await DatabaseUtils.getServerConfig(pendingVote.server_id);
 
             const embed = new EmbedBuilder()
-                .setColor(serverConfig.embed_color || '#5865F2')
+                .setColor(cfg.embed_color || '#5865F2')
                 .setTitle('🗳️ Point Award Proposal')
-                .setDescription(`**${proposerUser.displayName}** wants to ${pendingVote.point_change > 0 ? 'award' : 'deduct'} **${Math.abs(pendingVote.point_change)}** point${Math.abs(pendingVote.point_change) !== 1 ? 's' : ''} ${pendingVote.point_change > 0 ? 'to' : 'from'} ${targetUser}`)
+                .setDescription(`**${proposerMention}** wants to ${pendingVote.point_change > 0 ? 'award' : 'deduct'} **${Math.abs(pendingVote.point_change)}** point${Math.abs(pendingVote.point_change) !== 1 ? 's' : ''} ${pendingVote.point_change > 0 ? 'to' : 'from'} ${targetMention}`)
                 .addFields([
                     { name: 'Reason', value: pendingVote.reason, inline: false },
                     { name: 'Progress', value: `${voteCounts.approveCount}/${requiredVotes} approval${requiredVotes !== 1 ? 's' : ''}`, inline: true },
@@ -623,7 +635,7 @@ class VotingUtils {
             try {
                 targetUser = await client.users.fetch(targetUserId);
             } catch (error) {
-                console.warn(`Could not fetch target user ${targetUserId}:`, error.message);
+                logger.warn(`Could not fetch target user ${targetUserId}: ${error.message}`, 'VOTE');
                 targetUser = { displayName: 'Unknown User', toString: () => '@Unknown' };
             }
             
@@ -661,7 +673,7 @@ class VotingUtils {
                 approved: false,
                 voteId: pendingVote.id,
                 targetUserId: pendingVote.target_user_id,
-                proposedBy: pendingVote.proposer_user_id,
+                proposedBy: pendingVote.proposer_id,
                 points: pendingVote.point_change,
                 approveCount: voteCounts.approveCount,
                 threshold: this.calculateRequiredVotes(serverConfig, pendingVote.point_change),
@@ -703,7 +715,11 @@ class VotingUtils {
             
             let feedbackMessage;
             if (success) {
-                feedbackMessage = `🎉 ${targetUser} has received **${pointText}** point${Math.abs(pendingVote.point_change) !== 1 ? 's' : ''} - ${pendingVote.reason}`;
+                if (pendingVote.point_change >= 0) {
+                    feedbackMessage = `🎉 ${targetUser} has received **+${Math.abs(pendingVote.point_change)}** point${Math.abs(pendingVote.point_change) !== 1 ? 's' : ''} - ${pendingVote.reason}`;
+                } else {
+                    feedbackMessage = `🎉 ${targetUser} has lost **${Math.abs(pendingVote.point_change)}** point${Math.abs(pendingVote.point_change) !== 1 ? 's' : ''} - ${pendingVote.reason}`;
+                }
             } else {
                 const voteCounts = await DatabaseUtils.getVoteCount(pendingVote.id);
                 const serverConfig = await DatabaseUtils.getServerConfig(pendingVote.server_id);
@@ -730,6 +746,7 @@ class VotingUtils {
         try {
             // Remove the user's reaction
             await reaction.users.remove(user.id);
+            const userLabel = user.globalName || user.username;
             logger.vote(`Removed reaction from ${userLabel}: ${reason}`, 'REACTION');
             
             // Check if user wants DM notifications
@@ -756,6 +773,7 @@ class VotingUtils {
                 }
             }
         } catch (error) {
+            const userLabel = user.globalName || user.username;
             logger.errorWithStack(`Error removing reaction from ${userLabel}`, error, 'VOTE');
         }
     }

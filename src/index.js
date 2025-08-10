@@ -60,6 +60,18 @@ for (const file of eventFiles) {
 }
 logger.event(`Loaded ${loadedEvents} events.`, 'LOAD');
 
+// If running under ShardingManager, log shard id
+if (client.shard) {
+    client.once('ready', () => {
+        try {
+            const shardId = client.shard.ids?.[0];
+            if (typeof shardId === 'number') {
+                logger.lifecycle(`Client ready on shard ${shardId}`, 'SHARD');
+            }
+        } catch (_) {}
+    });
+}
+
 // Global error handling
 process.on('unhandledRejection', error => {
     logger.errorWithStack('Unhandled promise rejection', error, 'PROCESS');

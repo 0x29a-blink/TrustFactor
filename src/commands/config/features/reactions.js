@@ -230,6 +230,16 @@ async function setupEmojiCollectors(interaction, message) {
   const reactionFilter = (reaction, user) => user.id === userId;
   const reactionCollector = message.createReactionCollector({ filter: reactionFilter, time: 60000, max: 1 });
 
+  const cancelFilter = (i) => i.customId === 'config_reactions_cancel_add' && i.user.id === userId;
+  const cancelCollector = message.createMessageComponentCollector({ filter: cancelFilter, time: 60000 });
+
+  cancelCollector.on('collect', async (i) => {
+    // The router handles the UI update for cancel, we just need to stop the background collectors
+    messageCollector.stop('cancelled');
+    reactionCollector.stop('cancelled');
+    cancelCollector.stop('cancelled');
+  });
+
   messageCollector.on('collect', async (m) => {
     const emoji = extractEmojiFromMessage(m.content);
     if (!emoji) {
@@ -238,11 +248,13 @@ async function setupEmojiCollectors(interaction, message) {
     }
     messageCollector.stop('got_emoji');
     reactionCollector.stop('message');
+    cancelCollector.stop('got_emoji');
     await processEmojiSelection(interaction, emoji, m);
   });
 
   reactionCollector.on('collect', async (reaction) => {
     messageCollector.stop('reaction');
+    cancelCollector.stop('reaction');
     const emojiStr = formatEmojiFromReaction(reaction.emoji);
     await processEmojiSelection(interaction, emojiStr);
   });

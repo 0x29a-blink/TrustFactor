@@ -106,13 +106,7 @@ async function recordVote(voteId, voterId, voteType) {
         { onConflict: 'pending_vote_id,voter_id', returning: 'minimal' }
       );
     if (error) throw error;
-    try {
-      const counts = await getVoteCount(voteId);
-      await supabase
-        .from('pending_votes')
-        .update({ approve_count: counts.approveCount, reject_count: counts.rejectCount, updated_at: new Date().toISOString() })
-        .eq('id', voteId);
-    } catch (_) {}
+    // Trigger on DB handles counts update
     return true;
   } catch (error) {
     logger.errorWithStack('Error recording vote', error, 'DB');
@@ -171,13 +165,7 @@ async function removeVote(voteId, userId) {
       .eq('pending_vote_id', voteId)
       .eq('voter_id', String(userId));
     if (error) throw error;
-    try {
-      const counts = await getVoteCount(voteId);
-      await supabase
-        .from('pending_votes')
-        .update({ approve_count: counts.approveCount, reject_count: counts.rejectCount, updated_at: new Date().toISOString() })
-        .eq('id', voteId);
-    } catch (_) {}
+    // Trigger on DB handles counts update
     return true;
   } catch (error) {
     logger.errorWithStack('Error removing vote', error, 'DB');

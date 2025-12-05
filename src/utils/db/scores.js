@@ -9,21 +9,12 @@ async function getUserScore(userId, serverId) {
   try {
     const syncStatus = await getServerSyncStatus(serverId);
     if (syncStatus) {
-      const { data: groupMembers } = await supabase
-        .from('sync_group_members')
-        .select('server_id::text')
-        .eq('sync_code', syncStatus.sync_code)
-        .eq('is_active', true);
-      if (groupMembers && groupMembers.length > 0) {
-        const serverIds = groupMembers.map(m => m.server_id);
-        const { data, error } = await supabase
-          .from('scores')
-          .select('total_score')
-          .eq('user_id', toIdString(userId))
-          .in('server_id', serverIds);
-        if (error) throw error;
-        return (data || []).reduce((sum, row) => sum + (row.total_score || 0), 0);
-      }
+      const { data, error } = await supabase.rpc('get_user_group_score', {
+        target_user_id: toIdString(userId),
+        sync_code: syncStatus.sync_code
+      });
+      if (error) throw error;
+      return Number(data) || 0;
     }
     const { data, error } = await supabase
       .from('scores')
@@ -82,6 +73,12 @@ async function setUserScore(userId, serverId, newScore, reason, awardedBy) {
     const userIdStr = toIdString(userId);
     const serverIdStr = toIdString(serverId);
     const awardedByStr = toIdString(awardedBy);
+    
+    // Use applyScoreChange logic but calculate delta first? 
+    // Actually setUserScore is rare (mostly admin override). 
+    // We'll keep the old logic for absolute set, but it's still race-prone if concurrent sets happen.
+    // Ideally we'd have a set_score RPC too, but let's stick to fixing the high-frequency applyScoreChange first.
+    
     await supabase.from('users').upsert({ user_id: userIdStr }, { onConflict: 'user_id' });
 
     let { data: currentScore, error: scoreError } = await supabase
@@ -130,87 +127,19 @@ async function setUserScore(userId, serverId, newScore, reason, awardedBy) {
 
 async function applyScoreChange(userId, serverId, pointChange, reason, awardedBy, pendingVoteId = null, messageId = null, channelId = null) {
   try {
-    const userIdStr = String(userId);
-    const serverIdStr = String(serverId);
-    const awardedByStr = String(awardedBy);
-    await supabase.from('users').upsert({ user_id: userIdStr }, { onConflict: 'user_id' });
-
-    let { data: currentScore, error: scoreError } = await supabase
-      .from('scores')
-      .select('total_score, highest_score, lowest_score, total_awards_received')
-      .eq('user_id', userIdStr)
-      .eq('server_id', serverIdStr)
-      .single();
-
-    let newTotal;
-    if (scoreError && scoreError.code === 'PGRST116') {
-      newTotal = pointChange;
-      const { error: insertError } = await supabase.from('scores').insert({
-        user_id: userIdStr,
-        server_id: serverIdStr,
-        total_score: newTotal,
-        highest_score: newTotal,
-        lowest_score: newTotal,
-        total_awards_received: 1,
-      });
-      if (insertError) throw insertError;
-    } else if (scoreError) {
-      throw scoreError;
-    } else {
-      newTotal = currentScore.total_score + pointChange;
-      const desiredHighest = Math.max(currentScore.highest_score ?? newTotal, newTotal);
-      const desiredLowest = Math.min(currentScore.lowest_score ?? newTotal, newTotal);
-      const newReceived = (currentScore.total_awards_received ?? 0) + 1;
-      const { error: updateError } = await supabase
-        .from('scores')
-        .update({
-          total_score: newTotal,
-          highest_score: desiredHighest,
-          lowest_score: desiredLowest,
-          total_awards_received: newReceived,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', userIdStr)
-        .eq('server_id', serverIdStr);
-      if (updateError) throw updateError;
-    }
-
-    const historyEntry = {
-      user_id: userIdStr,
-      server_id: serverIdStr,
+    const { data, error } = await supabase.rpc('apply_score_change', {
+      target_user_id: String(userId),
+      target_server_id: String(serverId),
       point_change: pointChange,
-      reason,
-      awarded_by: awardedByStr,
-      vote_id: pendingVoteId,
-    };
-    if (messageId) historyEntry.message_id = String(messageId);
-    if (channelId) historyEntry.channel_id = String(channelId);
+      reason: reason,
+      awarded_by_id: String(awardedBy),
+      pending_vote_id: pendingVoteId,
+      message_id: messageId ? String(messageId) : null,
+      channel_id: channelId ? String(channelId) : null
+    });
 
-    const { error: historyError } = await supabase.from('score_history').insert(historyEntry);
-    if (historyError) throw historyError;
-
-    try {
-      if (pointChange !== 0 && awardedByStr) {
-        const { data: giverRow, error: giverErr } = await supabase
-          .from('scores')
-          .select('total_awards_given')
-          .eq('user_id', awardedByStr)
-          .eq('server_id', serverIdStr)
-          .single();
-        if (giverErr && giverErr.code === 'PGRST116') {
-          await supabase.from('scores').insert({ user_id: awardedByStr, server_id: serverIdStr, total_awards_given: 1 });
-        } else if (!giverErr) {
-          const nextGiven = (giverRow?.total_awards_given ?? 0) + 1;
-          await supabase
-            .from('scores')
-            .update({ total_awards_given: nextGiven })
-            .eq('user_id', awardedByStr)
-            .eq('server_id', serverIdStr);
-        }
-      }
-    } catch (_) {}
-
-    return { user_id: userIdStr, server_id: serverIdStr, total_score: newTotal };
+    if (error) throw error;
+    return data; // Returns { user_id, server_id, total_score }
   } catch (error) {
     logger.errorWithStack('Error applying score change', error, 'DB');
     throw error;

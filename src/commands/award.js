@@ -2,7 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, Butt
 const DatabaseUtils = require('../utils/database');
 const VotingUtils = require('../utils/voting');
 const { isTestingMode, getPermissionLevel } = require('../utils/permissions');
-const AuditLogger = require('../utils/logging');
+const AuditLogger = require('../utils/auditLogger');
 const logger = require('../utils/logger');
 
 module.exports = {

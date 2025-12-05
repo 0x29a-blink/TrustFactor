@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const DatabaseUtils = require('../utils/database');
-const AuditLogger = require('../utils/logging');
+const AuditLogger = require('../utils/auditLogger');
 const { supabase } = require('../config/database');
 const logger = require('../utils/logger');
 

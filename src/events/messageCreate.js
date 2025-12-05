@@ -1,3 +1,4 @@
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const VotingUtils = require('../utils/voting');
 const DatabaseUtils = require('../utils/database');
 const logger = require('../utils/logger');
@@ -58,7 +59,6 @@ module.exports = {
             if (Math.abs(points) > serverConfig.max_points_per_award || 
                 Math.abs(points) < 1) {
                 logger.vote(`Invalid point amount: ${points} (max: ${serverConfig.max_points_per_award})`, 'MESSAGE');
-                // Add a reaction to indicate invalid point amount
                 await message.react('❌');
                 return;
             }
@@ -66,7 +66,6 @@ module.exports = {
             // Check minimum vote magnitude (absolute value constraint) for reply-based voting
             if (Math.abs(points) < serverConfig.min_vote_magnitude) {
                 logger.vote(`Invalid point amount: ${points} (minimum magnitude: ${serverConfig.min_vote_magnitude})`, 'MESSAGE');
-                // Add a reaction to indicate vote magnitude too small
                 await message.react('❌');
                 return;
             }
@@ -97,39 +96,65 @@ module.exports = {
                     return;
                 }
             }
+
+            // Prepare the proposal Embed
+            const targetMention = `<@${originalMessage.author.id}>`;
+            const proposerMention = `<@${message.author.id}>`;
+            const votesNeeded = VotingUtils.calculateRequiredVotes(serverConfig, points);
             
-            // Create a pending vote for this reply-based award
+            const embed = new EmbedBuilder()
+                .setColor(serverConfig.embed_color || '#5865F2')
+                .setTitle('🗳️ Point Award Proposal')
+                .setDescription(`**${proposerMention}** wants to ${points > 0 ? 'award' : 'deduct'} **${Math.abs(points)}** point${Math.abs(points) !== 1 ? 's' : ''} ${points > 0 ? 'to' : 'from'} ${targetMention}`)
+                .addFields([
+                    { name: 'Reason', value: reasonText, inline: false },
+                    { name: 'Progress', value: `0/${votesNeeded} approval${votesNeeded !== 1 ? 's' : ''}`, inline: true },
+                    { name: 'Rejections', value: '0', inline: true }
+                ])
+                .setFooter({ text: 'Vote with the buttons below' })
+                .setTimestamp();
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('vote_approve')
+                        .setLabel('Approve')
+                        .setStyle(ButtonStyle.Success)
+                        .setEmoji('✅'),
+                    new ButtonBuilder()
+                        .setCustomId('vote_reject')
+                        .setLabel('Reject')
+                        .setStyle(ButtonStyle.Danger)
+                        .setEmoji('❌')
+                );
+
+            // Send the proposal as a reply
+            const proposalMessage = await message.reply({ embeds: [embed], components: [row] });
+            
+            // Create a pending vote for this reply-based award, linking it to the proposal message
+            // We track the proposal message ID so buttons on it work correctly
             const voteData = {
-                messageId: message.id,
-                originalMessageId: originalMessage.id,
+                messageId: proposalMessage.id, // The embed message ID
+                originalMessageId: message.id, // The "+1" reply message ID (for traceback/history)
                 channelId: message.channel.id,
                 proposerId: message.author.id,
                 targetUserId: originalMessage.author.id,
                 serverId: message.guild.id,
                 pointChange: points,
                 reason: reasonText,
-                votesNeeded: VotingUtils.calculateRequiredVotes(serverConfig, points),
+                votesNeeded: votesNeeded,
                 expiresAt: new Date(Date.now() + (serverConfig.voting_timeout * 60 * 1000)),
-                voteMethod: 'reply'
+                voteMethod: 'reply' // Treated like a command vote now essentially
             };
             
-            const pendingVote = await DatabaseUtils.createPendingVote(voteData);
+            await DatabaseUtils.createPendingVote(voteData);
             
             logger.vote(`Created pending vote from reply: ${(message.author.globalName || message.author.username)} wants to ${points > 0 ? 'award' : 'deduct'} ${Math.abs(points)} points ${points > 0 ? 'to' : 'from'} ${(originalMessage.author.globalName || originalMessage.author.username)}`, 'MESSAGE');
             
-            // Add confirmation reaction to show the bot detected the award request
-            await message.react('👀');
-            
-            // Add voting reactions for community voting
-            await message.react('👍');
-            await message.react('👎');
-            
-            // Note: No auto-approval for reply-based voting - let users vote manually with reactions
-            
-            // Always set up vote expiration timer (even if already approved, for cleanup)
+            // Always set up vote expiration timer
             setTimeout(async () => {
                 try {
-                    const currentVote = await DatabaseUtils.getPendingVote(message.id);
+                    const currentVote = await DatabaseUtils.getPendingVote(proposalMessage.id);
                     if (currentVote && currentVote.status === 'pending') {
                         const expired = await DatabaseUtils.atomicExpireVote(currentVote.id);
                         if (expired) {
@@ -143,7 +168,6 @@ module.exports = {
             
         } catch (error) {
             logger.errorWithStack('Error processing reply-based point award', error, 'MESSAGE');
-            // Add error reaction
             await message.react('❌');
         }
     }

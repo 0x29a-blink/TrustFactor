@@ -1,5 +1,5 @@
 const { supabase } = require('../../../config/database');
-const AuditLogger = require('../../../utils/logging');
+const AuditLogger = require('../../../utils/auditLogger');
 const { handleServerSettingsChange } = require('../../../utils/syncHandler');
 
 async function updateServerConfig(serverId, updates) {

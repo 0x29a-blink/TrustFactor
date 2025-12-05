@@ -4,9 +4,8 @@
   "description": "A community-driven Discord bot for tracking user scores through voting",
   "main": "index.js",
   "scripts": {
-    "start": "node src/sharder.js",
-    "start:restart": "node restart.js",
-    "dev": "nodemon src/sharder.js",
+    "start:sharded": "node src/sharder.js",
+    "dev": "nodemon src/index.js",
     "test": "jest",
     "migrate": "echo Use Supabase CLI migrations instead (see README) && exit 0",
     "deploy-commands": "node src/utils/deploy-commands.js",

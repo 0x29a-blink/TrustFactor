@@ -1,6 +1,6 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const DatabaseUtils = require('./database');
-const AuditLogger = require('./logging');
+const AuditLogger = require('./auditLogger');
 const logger = require('./logger');
 
 // Lightweight cooldown to avoid running expensive role syncs too frequently per server

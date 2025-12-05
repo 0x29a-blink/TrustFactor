@@ -163,46 +163,34 @@ module.exports = {
             
             logger.vote(`Created pending reaction-based vote: ${(user.globalName || user.username)} -> ${(message.author.globalName || message.author.username)} for ${customReaction.point_value} pts`, 'REACTION');
             
+            // Always record the proposer's vote for reaction-based awards
+            // The act of reacting IS the vote, so we count it regardless of auto_approval setting
+            await DatabaseUtils.recordVote(pendingVote.id, user.id, 'approve');
+            
             // --- DM or channel feedback to proposer ---
-            const progressText = `(1/${voteData.votesNeeded} approvals, 0 rejections)`;
+            const initialApprovals = 1;
+            const progressText = `(${initialApprovals}/${voteData.votesNeeded} approvals, 0 rejections)`;
             const messageLink = `https://discord.com/channels/${message.guild.id}/${message.channel.id}/${message.id}`;
             const startFeedback = `You started a vote to award **${customReaction.point_value}** points to ${message.author.displayName} in **${message.guild.name}**!
 ${progressText}
 ${messageLink}`;
-            try {
-                // Check if user wants DM notifications before sending
-                const allowDMs = await DatabaseUtils.getUserDMPreference(user.id);
-                if (allowDMs) {
-                    await user.send(startFeedback);
-                }
-                // If DMs are disabled, silently skip notification to avoid channel spam
-                // The vote still works, user just doesn't get notified
-            } catch (dmError) {
-                // Only send fallback if the DM failed due to technical issues (not user preference)
-                if (dmError.message !== 'User has disabled DM notifications') {
-                    try {
-                        if (message.channel && message.channel.send) {
-                            await message.channel.send({
-                                content: `${user}, you started a vote to award **${customReaction.point_value}** points to ${(message.author.globalName || message.author.username)}! ${progressText}\n${messageLink} (DMs are closed)`
-                            });
-                        }
-                    } catch (chanErr) {
-                        logger.debug(`Could not send fallback feedback in channel: ${chanErr.message}`,'REACTION');
-                    }
-                }
-            }
-            // --- end feedback ---
             
-            // Auto-approve the proposer's vote if auto-approval is enabled (they initiated it by reacting)
-            if (serverConfig.auto_approval !== false) {
-                await DatabaseUtils.recordVote(pendingVote.id, user.id, 'approve');
-            }
-            
-            // Check if threshold is met (might be 1 vote needed)
-            const voteCounts = await DatabaseUtils.getVoteCount(pendingVote.id);
             const requiredVotes = VotingUtils.calculateRequiredVotes(serverConfig, customReaction.point_value);
+            let shouldApprove = false;
+
+            // Optimization: If we just voted (which we always do for reactions) and that's all we needed, approve immediately
+            // This avoids a DB round-trip and potential consistency race conditions
+            if (requiredVotes <= 1) {
+                shouldApprove = true;
+            } else {
+                // Otherwise, check the actual DB count
+                const voteCounts = await DatabaseUtils.getVoteCount(pendingVote.id);
+                if (voteCounts.approveCount >= requiredVotes) {
+                    shouldApprove = true;
+                }
+            }
             
-            if (voteCounts.approveCount >= requiredVotes) {
+            if (shouldApprove) {
                 // Threshold met - approve immediately
                 const wasApproved = await VotingUtils.approveVote(pendingVote, null, message);
                 if (!wasApproved) {

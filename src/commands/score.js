@@ -17,6 +17,7 @@ module.exports = {
     async execute(interaction) {
         const targetUser = interaction.options.getUser('user') || interaction.user;
         const serverId = interaction.guild.id;
+        const isOwnScore = targetUser.id === interaction.user.id;
 
         // Prevent checking bot scores
         if (targetUser.bot) {
@@ -26,15 +27,19 @@ module.exports = {
             });
         }
 
+        // Defer reply immediately to prevent timeouts (3s limit)
+        await interaction.deferReply({ 
+            flags: isOwnScore ? MessageFlags.Ephemeral : 0 
+        });
+
         try {
             // Get server configuration
             const serverConfig = await DatabaseUtils.getServerConfig(serverId);
             
             // Check if bot is active for this server
             if (!serverConfig.is_active) {
-                return await interaction.reply({
-                    content: '🚫 **TrustFactor bot is currently disabled** for this server.\n\nServer administrators can re-enable it using `/config` → Advanced → Bot Status.',
-                    flags: MessageFlags.Ephemeral
+                return await interaction.editReply({
+                    content: '🚫 **TrustFactor bot is currently disabled** for this server.\n\nServer administrators can re-enable it using `/config` → Advanced → Bot Status.'
                 });
             }
             
@@ -53,20 +58,13 @@ module.exports = {
             // Generate initial score display
             const { files, components } = await generateScoreDisplay(interaction, scoreState);
             
-            // Determine if this is a self-check or other user check
-            const isOwnScore = targetUser.id === interaction.user.id;
-            
             const replyOptions = {
                 files: files,
                 components: components,
                 embeds: [] // Ensure no embeds are sent
             };
             
-            if (isOwnScore) {
-                replyOptions.flags = MessageFlags.Ephemeral;
-            }
-            
-            const response = await interaction.reply(replyOptions).then(() => interaction.fetchReply());
+            const response = await interaction.editReply(replyOptions);
 
             // Create collector for button interactions
             const collector = response.createMessageComponentCollector({
@@ -230,9 +228,8 @@ module.exports = {
 
         } catch (error) {
             logger.errorWithStack('Error fetching user score', error, 'SCORE');
-            await interaction.reply({
-                content: '❌ There was an error fetching the score. Please try again.',
-                flags: MessageFlags.Ephemeral
+            await interaction.editReply({
+                content: '❌ There was an error fetching the score. Please try again.'
             });
         }
     },

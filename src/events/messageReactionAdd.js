@@ -167,13 +167,28 @@ module.exports = {
             // The act of reacting IS the vote, so we count it regardless of auto_approval setting
             await DatabaseUtils.recordVote(pendingVote.id, user.id, 'approve');
             
-            // --- DM or channel feedback to proposer ---
-            const initialApprovals = 1;
-            const progressText = `(${initialApprovals}/${voteData.votesNeeded} approvals, 0 rejections)`;
-            const messageLink = `https://discord.com/channels/${message.guild.id}/${message.channel.id}/${message.id}`;
-            const startFeedback = `You started a vote to award **${customReaction.point_value}** points to ${message.author.displayName} in **${message.guild.name}**!
+            // --- DM feedback to proposer ---
+            try {
+                const initialApprovals = 1;
+                const progressText = `(${initialApprovals}/${voteData.votesNeeded} approvals, 0 rejections)`;
+                const messageLink = `https://discord.com/channels/${message.guild.id}/${message.channel.id}/${message.id}`;
+                
+                // Calculate relative timestamp for expiration
+                const expiresTimestamp = Math.floor(voteData.expiresAt.getTime() / 1000);
+                const relativeTime = `<t:${expiresTimestamp}:R>`;
+                
+                const startFeedback = `You started a vote to award **${customReaction.point_value}** points to ${authorLabel} in **${message.guild.name}**!
 ${progressText}
+Expires ${relativeTime}
 ${messageLink}`;
+
+                const allowDMs = await DatabaseUtils.getUserDMPreference(user.id);
+                if (allowDMs) {
+                    await user.send(startFeedback);
+                }
+            } catch (error) {
+                logger.debug(`Could not send vote start DM to ${user.tag}: ${error.message}`, 'REACTION');
+            }
             
             const requiredVotes = VotingUtils.calculateRequiredVotes(serverConfig, customReaction.point_value);
             let shouldApprove = false;

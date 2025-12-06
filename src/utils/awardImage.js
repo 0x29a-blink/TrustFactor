@@ -83,7 +83,7 @@ async function renderAwardImage(data, options = {}) {
                     align-items: center;
                     justify-content: center;
                     position: relative;
-                    margin-top: -20px;
+                    margin-top: 0px;
                 }
                 .user-box {
                     width: 200px;

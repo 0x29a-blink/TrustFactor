@@ -96,6 +96,10 @@ async function getServerConfig(serverId) {
   }
 }
 
+function invalidateServerConfigCache(serverId) {
+  configCache.delete(String(serverId));
+}
+
 // USER PREFERENCES
 async function getUserDMPreference(userId) {
   try {
@@ -222,6 +226,7 @@ module.exports = {
   addBlockedChannel,
   removeBlockedChannel,
   clearBlockedChannels,
+  invalidateServerConfigCache,
 };
 
 

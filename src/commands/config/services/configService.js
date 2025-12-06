@@ -1,6 +1,7 @@
 const { supabase } = require('../../../config/database');
 const AuditLogger = require('../../../utils/auditLogger');
 const { handleServerSettingsChange } = require('../../../utils/syncHandler');
+const { invalidateServerConfigCache } = require('../../../utils/db/config');
 
 async function updateServerConfig(serverId, updates) {
   const serverIdString = String(serverId);
@@ -13,6 +14,8 @@ async function updateServerConfig(serverId, updates) {
     .eq('server_id', serverIdString);
 
   if (error) throw error;
+
+  invalidateServerConfigCache(serverIdString);
 
   try {
     await handleServerSettingsChange(serverIdString, updates);

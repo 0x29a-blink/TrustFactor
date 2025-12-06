@@ -60,7 +60,7 @@ async function showEditReactionModal(interaction, serverConfig, emoji) {
   } catch (error) {
     try {
       await interaction.followUp({ content: '❌ Error showing edit dialog. Please try again.', flags: MessageFlags.Ephemeral });
-    } catch {}
+    } catch { /* ignore */ }
   }
 }
 
@@ -72,7 +72,7 @@ async function showEditReactionSelect(interaction, serverConfig) {
       return;
     }
     const embed = new EmbedBuilder().setColor(serverConfig.embed_color || '#5865F2').setTitle('✏️ Edit Custom Reaction').setDescription('Select a reaction to edit from the dropdown below.');
-    const options = customReactions.map((reaction) => ({ label: `${reaction.emoji} → ${reaction.point_value > 0 ? '+' : ''}${reaction.point_value} points`, value: reaction.emoji, description: `Edit this reaction's point value` }));
+    const options = customReactions.map((reaction) => ({ label: `${reaction.emoji} → ${reaction.point_value > 0 ? '+' : ''}${reaction.point_value} points`, value: reaction.emoji, description: 'Edit this reaction\'s point value' }));
     const selectMenu = new StringSelectMenuBuilder().setCustomId('config_reaction_edit_select').setPlaceholder('Choose a reaction to edit').addOptions(options);
     const row1 = new ActionRowBuilder().addComponents(selectMenu);
     const row2 = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('config_reactions').setLabel('← Back to Reactions').setStyle(ButtonStyle.Primary));
@@ -90,7 +90,7 @@ async function showRemoveReactionSelect(interaction, serverConfig) {
       return;
     }
     const embed = new EmbedBuilder().setColor(serverConfig.embed_color || '#5865F2').setTitle('🗑️ Remove Custom Reaction').setDescription('Select a reaction to remove from the dropdown below.');
-    const options = customReactions.map((reaction) => ({ label: `${reaction.emoji} → ${reaction.point_value > 0 ? '+' : ''}${reaction.point_value} points`, value: reaction.emoji, description: `Remove this reaction` }));
+    const options = customReactions.map((reaction) => ({ label: `${reaction.emoji} → ${reaction.point_value > 0 ? '+' : ''}${reaction.point_value} points`, value: reaction.emoji, description: 'Remove this reaction' }));
     const selectMenu = new StringSelectMenuBuilder().setCustomId('config_reaction_remove_select').setPlaceholder('Choose a reaction to remove').addOptions(options);
     const row1 = new ActionRowBuilder().addComponents(selectMenu);
     const row2 = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('config_reactions').setLabel('← Back to Reactions').setStyle(ButtonStyle.Primary));
@@ -291,7 +291,7 @@ async function validateCustomEmoji(emojiString, guild) {
     try {
       await guild.emojis.fetch();
       serverEmoji = guild.emojis.cache.get(id);
-    } catch (e) {}
+    } catch (e) { /* ignore */ }
   }
   if (!serverEmoji) return { valid: false, error: 'Emoji not found in server' };
   return { valid: true, id, name };
@@ -300,7 +300,7 @@ async function validateCustomEmoji(emojiString, guild) {
 async function processEmojiSelection(interaction, emoji, userMessage = null) {
   try {
     if (userMessage && userMessage.deletable) {
-      await userMessage.delete().catch(() => {});
+      await userMessage.delete().catch(() => null);
     }
 
     // If custom emoji, ensure it belongs to this server
@@ -332,7 +332,7 @@ async function processEmojiSelection(interaction, emoji, userMessage = null) {
         return;
       }
       pointsCollector.stop('got_points');
-      if (m.deletable) await m.delete().catch(() => {});
+      if (m.deletable) await m.delete().catch(() => null);
       await finalizeEmojiAddition(interaction, emoji, num);
     });
 
@@ -364,7 +364,7 @@ async function finalizeEmojiAddition(interaction, emoji, points) {
 
 async function handleEmojiTimeout(interaction, step = 'emoji') {
   const msg = step === 'emoji' ? '⏰ Emoji addition timed out.' : '⏰ Point value input timed out.';
-  await interaction.followUp({ content: msg, flags: MessageFlags.Ephemeral }).catch(() => {});
+  await interaction.followUp({ content: msg, flags: MessageFlags.Ephemeral }).catch(() => null);
   const cfg = await DatabaseUtils.getServerConfig(interaction.guild.id);
   await showReactionConfig(interaction, cfg);
 }

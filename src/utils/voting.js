@@ -1,7 +1,8 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
+const { EmbedBuilder, MessageFlags, AttachmentBuilder } = require('discord.js');
 const DatabaseUtils = require('./database');
 const AuditLogger = require('./auditLogger');
 const logger = require('./logger');
+const { renderAwardImage } = require('./awardImage');
 
 // Lightweight cooldown to avoid running expensive role syncs too frequently per server
 const roleSyncCooldownMs = 15000; // 15 seconds
@@ -93,8 +94,8 @@ class VotingUtils {
             }
             
             // Send feedback to the user about their vote
+            const voteTypeText = isApproval ? 'approval' : 'rejection';
             try {
-                const voteTypeText = isApproval ? 'approval' : 'rejection';
                 const serverName = message.guild ? message.guild.name : 'Unknown Server';
                 const messageLink = `https://discord.com/channels/${message.guild.id}/${message.channel.id}/${message.id}`;
                 const progressText = `(${voteCounts.approveCount}/${requiredVotes} approvals, ${voteCounts.rejectCount} rejections)`;
@@ -309,7 +310,7 @@ class VotingUtils {
             
             // Check if threshold is met
             if (voteCounts.approveCount >= requiredVotes) {
-                const wasApproved = await this.approveVote(pendingVote, interaction, null, serverConfig);
+                await this.approveVote(pendingVote, interaction, null, serverConfig);
                 // From the user's perspective, their vote led to or confirmed approval
                 actionMessage = '🎉 Vote approved!';
             } else {
@@ -381,22 +382,52 @@ class VotingUtils {
             }
             
             const serverConfig = await DatabaseUtils.getServerConfig(pendingVote.server_id);
-            const targetMention = `<@${String(pendingVote.target_user_id)}>`;
-            const proposerMention = `<@${String(pendingVote.proposer_id)}>`;
             
+            // Fetch names
+            let proposerName = 'Unknown User';
+            let targetName = 'Unknown User';
+            try {
+                const proposer = await client.users.fetch(pendingVote.proposer_id);
+                proposerName = proposer.globalName || proposer.username;
+            } catch (_) { /* ignore */ }
+            try {
+                const target = await client.users.fetch(pendingVote.target_user_id);
+                targetName = target.globalName || target.username;
+            } catch (_) { /* ignore */ }
+            
+            // Generate Image
+            const imageBuffer = await renderAwardImage({
+                proposerName,
+                targetName,
+                points: pendingVote.point_change,
+                reason: pendingVote.reason,
+                action: pendingVote.point_change > 0 ? 'Point Award' : 'Point Deduction',
+                status: 'PROPOSAL',
+                voteProgress: {
+                    approve: voteCounts.approveCount,
+                    reject: voteCounts.rejectCount,
+                    needed: requiredVotes
+                }
+            });
+            
+            const attachment = new AttachmentBuilder(imageBuffer, { name: 'award_updated.png' });
+
             const embed = new EmbedBuilder()
                 .setColor(serverConfig.embed_color || '#5865F2')
                 .setTitle('🗳️ Point Award Proposal')
-                .setDescription(`**${proposerMention}** wants to ${pendingVote.point_change > 0 ? 'award' : 'deduct'} **${Math.abs(pendingVote.point_change)}** point${Math.abs(pendingVote.point_change) !== 1 ? 's' : ''} ${pendingVote.point_change > 0 ? 'to' : 'from'} ${targetMention}`)
+                .setDescription(`Vote required to ${pendingVote.point_change > 0 ? 'award' : 'deduct'} points.`)
+                .setImage('attachment://award_updated.png')
                 .addFields([
-                    { name: 'Reason', value: pendingVote.reason, inline: false },
                     { name: 'Progress', value: `${voteCounts.approveCount}/${requiredVotes} approvals`, inline: true },
                     { name: 'Rejections', value: `${voteCounts.rejectCount}`, inline: true }
                 ])
                 .setFooter({ text: 'Vote with 👍 or 👎 reactions' })
                 .setTimestamp();
             
-            await message.edit({ embeds: [embed] });
+            await message.edit({ 
+                embeds: [embed],
+                files: [attachment]
+            });
             
         } catch (error) {
             logger.errorWithStack('Error updating vote embed for reaction', error, 'VOTE');
@@ -463,31 +494,60 @@ class VotingUtils {
                 // Don't fail the vote if role assignment fails
             }
 
-            // Get updated user score for feedback
-            const newScore = applyResult?.total_score;
+            // Get names for image generation
             const client = interaction ? interaction.client : message.client;
-            const targetUserMention = `<@${String(pendingVote.target_user_id)}>`;
+            let proposerName = 'Unknown User';
+            let targetName = 'Unknown User';
+            try {
+                const proposer = await client.users.fetch(pendingVote.proposer_id);
+                proposerName = proposer.globalName || proposer.username;
+            } catch (_) { /* ignore */ }
+            try {
+                const target = await client.users.fetch(pendingVote.target_user_id);
+                targetName = target.globalName || target.username;
+            } catch (_) { /* ignore */ }
+
+            // Generate Approved Image (Safe Mode)
+            let attachment = null;
+            try {
+                const imageBuffer = await renderAwardImage({
+                    proposerName,
+                    targetName,
+                    points: pendingVote.point_change,
+                    reason: pendingVote.reason,
+                    action: pendingVote.point_change > 0 ? 'Point Award' : 'Point Deduction',
+                    status: 'APPROVED'
+                });
+                attachment = new AttachmentBuilder(imageBuffer, { name: 'award_approved.png' });
+            } catch (imgError) {
+                logger.errorWithStack('Failed to generate approved vote image', imgError, 'APPROVE');
+                // Fallback to text-only will happen automatically if attachment is null
+            }
+
+            // Get updated score safely
+            const newScore = applyResult?.total_score ?? 0;
 
             // Create success embed
             const serverConfigLocal = serverConfig || await DatabaseUtils.getServerConfig(pendingVote.server_id);
-            const isPositive = pendingVote.point_change > 0;
-            const absPoints = Math.abs(pendingVote.point_change);
-            const changeText = isPositive
-                ? `received **+${absPoints}** point${absPoints !== 1 ? 's' : ''}`
-                : `lost **${absPoints}** point${absPoints !== 1 ? 's' : ''}`;
+            const targetUserMention = `<@${String(pendingVote.target_user_id)}>`;
+            
             const successEmbed = new EmbedBuilder()
                 .setColor('#00ff00')
                 .setTitle('✅ Vote Approved!')
-                .setDescription(`${targetUserMention} has ${changeText}`)
+                .setDescription(`${targetUserMention} received **${pendingVote.point_change}** points.`)
                 .addFields([
-                    { name: 'Reason', value: pendingVote.reason, inline: false },
                     { name: 'New Score', value: `${newScore} point${Math.abs(newScore) !== 1 ? 's' : ''}`, inline: true }
                 ])
                 .setTimestamp();
 
+            if (attachment) {
+                successEmbed.setImage('attachment://award_approved.png');
+            }
+
             // Update the message if possible (for slash commands and reaction voting)
             // For reply-based voting, we can't edit the original message, so we'll send a new message instead
             const messageToEdit = interaction ? interaction.message : message;
+            const filesPayload = attachment ? [attachment] : [];
             
             try {
                 // Check if this is a reply-based vote by checking if the message has a reference
@@ -498,7 +558,8 @@ class VotingUtils {
                 if (isReplyBasedVote) {
                     // For reply-based voting, send a new message instead of editing
                     await message.reply({
-                        embeds: [successEmbed]
+                        embeds: [successEmbed],
+                        files: filesPayload
                     });
                     
                     // Remove voting reactions from the reply message
@@ -513,26 +574,28 @@ class VotingUtils {
                 } else if (isReactionBasedVote) {
                     // For reaction-based voting, reply to the original message with the success embed
                     // Check if the message is authored by our bot - if not, we can't edit it, so we reply
-                    const client = message.client;
                     const isBotMessage = message.author.id === client.user.id;
                     
                     if (isBotMessage) {
                         // If it's our bot's message, we can edit it
                         await message.edit({
                             embeds: [successEmbed],
-                            components: [] // Remove buttons/reactions
+                            components: [], // Remove buttons/reactions
+                            files: filesPayload
                         });
                     } else {
                         // If it's a user's message, reply with the success embed
                         await message.reply({
-                            embeds: [successEmbed]
+                            embeds: [successEmbed],
+                            files: filesPayload
                         });
                     }
                 } else {
                     // For slash commands, edit the original voting message
                     await messageToEdit.edit({
                         embeds: [successEmbed],
-                        components: [] // Remove buttons/reactions
+                        components: [], // Remove buttons/reactions
+                        files: filesPayload
                     });
                 }
             } catch (editError) {
@@ -540,7 +603,8 @@ class VotingUtils {
                 // Fallback: send a new message if editing fails
                 const channel = messageToEdit.channel;
                 await channel.send({
-                    embeds: [successEmbed]
+                    embeds: [successEmbed],
+                    files: filesPayload
                 });
             }
 
@@ -580,38 +644,62 @@ class VotingUtils {
     static async updateVoteEmbed(interaction, pendingVote, voteCounts, requiredVotes, serverConfig) {
         try {
             // Add comprehensive null checks to prevent Discord API errors
-            logger.object('Debug - pendingVote object', pendingVote, 'VOTE');
-            
             if (!pendingVote.target_user_id || pendingVote.target_user_id === 'null' || 
                 !pendingVote.proposer_id || pendingVote.proposer_id === 'null') {
                 logger.error('Missing or invalid user IDs in pending vote', 'VOTE');
-                logger.object('Invalid vote data', {
-                    target_user_id: pendingVote.target_user_id,
-                    proposer_id: pendingVote.proposer_id,
-                    full_object: pendingVote
-                }, 'VOTE');
                 return;
             }
             
-            const targetUserId = String(pendingVote.target_user_id);
-            const proposerUserId = String(pendingVote.proposer_id);
-            const targetMention = `<@${targetUserId}>`;
-            const proposerMention = `<@${proposerUserId}>`;
+            const client = interaction.client;
+            let proposerName = 'Unknown User';
+            let targetName = 'Unknown User';
+
+            try {
+                const proposer = await client.users.fetch(pendingVote.proposer_id);
+                proposerName = proposer.globalName || proposer.username;
+            } catch (_) { /* ignore */ }
+
+            try {
+                const target = await client.users.fetch(pendingVote.target_user_id);
+                targetName = target.globalName || target.username;
+            } catch (_) { /* ignore */ }
+
             const cfg = serverConfig || await DatabaseUtils.getServerConfig(pendingVote.server_id);
+
+            // Generate Image with Progress
+            const imageBuffer = await renderAwardImage({
+                proposerName,
+                targetName,
+                points: pendingVote.point_change,
+                reason: pendingVote.reason,
+                action: pendingVote.point_change > 0 ? 'Point Award' : 'Point Deduction',
+                status: 'PROPOSAL',
+                voteProgress: {
+                    approve: voteCounts.approveCount,
+                    reject: voteCounts.rejectCount,
+                    needed: requiredVotes
+                }
+            });
+            
+            const attachment = new AttachmentBuilder(imageBuffer, { name: 'award_updated.png' });
 
             const embed = new EmbedBuilder()
                 .setColor(cfg.embed_color || '#5865F2')
                 .setTitle('🗳️ Point Award Proposal')
-                .setDescription(`**${proposerMention}** wants to ${pendingVote.point_change > 0 ? 'award' : 'deduct'} **${Math.abs(pendingVote.point_change)}** point${Math.abs(pendingVote.point_change) !== 1 ? 's' : ''} ${pendingVote.point_change > 0 ? 'to' : 'from'} ${targetMention}`)
+                .setDescription(`Vote required to ${pendingVote.point_change > 0 ? 'award' : 'deduct'} points.`)
+                .setImage('attachment://award_updated.png')
                 .addFields([
-                    { name: 'Reason', value: pendingVote.reason, inline: false },
                     { name: 'Progress', value: `${voteCounts.approveCount}/${requiredVotes} approval${requiredVotes !== 1 ? 's' : ''}`, inline: true },
                     { name: 'Rejections', value: `${voteCounts.rejectCount}`, inline: true }
                 ])
                 .setFooter({ text: 'Vote with the buttons below' })
                 .setTimestamp();
 
-            await interaction.message.edit({ embeds: [embed] });
+            // When editing with files, we must explicitly pass the new files array to replace existing ones
+            await interaction.message.edit({ 
+                embeds: [embed],
+                files: [attachment]
+            });
 
         } catch (error) {
             logger.errorWithStack('Error updating vote embed', error, 'VOTE');
@@ -638,15 +726,35 @@ class VotingUtils {
                 logger.warn(`Could not fetch target user ${targetUserId}: ${error.message}`, 'VOTE');
                 targetUser = { displayName: 'Unknown User', toString: () => '@Unknown' };
             }
+
+            // Get proposer for image
+            let proposerName = 'Unknown User';
+            try {
+                const proposer = await client.users.fetch(pendingVote.proposer_id);
+                proposerName = proposer.globalName || proposer.username;
+            } catch (_) { /* ignore */ }
             
+            const targetName = targetUser.globalName || targetUser.username || 'Unknown User';
+
+            // Generate Expired Image
+            const imageBuffer = await renderAwardImage({
+                proposerName,
+                targetName,
+                points: pendingVote.point_change,
+                reason: pendingVote.reason,
+                action: pendingVote.point_change > 0 ? 'Point Award' : 'Point Deduction',
+                status: 'EXPIRED'
+            });
+            const attachment = new AttachmentBuilder(imageBuffer, { name: 'award_expired.png' });
+
             // Create timeout embed
             const serverConfig = await DatabaseUtils.getServerConfig(pendingVote.server_id);
             const timeoutEmbed = new EmbedBuilder()
                 .setColor('#ff6b6b')
                 .setTitle('⏰ Vote Expired')
-                .setDescription(`Vote timed out - ${targetUser} did not receive **${pendingVote.point_change > 0 ? '+' : ''}${pendingVote.point_change}** point${Math.abs(pendingVote.point_change) !== 1 ? 's' : ''}`)  
+                .setDescription(`Vote timed out - ${targetUser} did not receive **${pendingVote.point_change > 0 ? '+' : ''}${pendingVote.point_change}** point${Math.abs(pendingVote.point_change) !== 1 ? 's' : ''}`)
+                .setImage('attachment://award_expired.png')
                 .addFields([
-                    { name: 'Reason', value: pendingVote.reason, inline: false },
                     { name: 'Status', value: 'Expired - insufficient votes', inline: true },
                     { name: 'Time Limit', value: `${serverConfig.voting_timeout} minute${serverConfig.voting_timeout !== 1 ? 's' : ''}`, inline: true }
                 ])
@@ -656,13 +764,15 @@ class VotingUtils {
             if (message.author.id === client.user.id) {
                 await message.edit({
                     embeds: [timeoutEmbed],
-                    components: [] // Remove buttons
+                    components: [], // Remove buttons
+                    files: [attachment]
                 });
             } else {
                 // Otherwise, send a new timeout message in the channel
                 if (message.channel && message.channel.send) {
                     await message.channel.send({
-                        embeds: [timeoutEmbed]
+                        embeds: [timeoutEmbed],
+                        files: [attachment]
                     });
                 }
             }
@@ -711,8 +821,6 @@ class VotingUtils {
                 return;
             }
             
-            const pointText = `${pendingVote.point_change > 0 ? '+' : ''}${pendingVote.point_change}`;
-            
             let feedbackMessage;
             if (success) {
                 if (pendingVote.point_change >= 0) {
@@ -757,7 +865,7 @@ class VotingUtils {
                 const embed = new EmbedBuilder()
                     .setColor('#ff8c00')
                     .setTitle('⚠️ Vote Not Registered')
-                    .setDescription(`Your reaction vote was not registered and has been removed.`)
+                    .setDescription('Your reaction vote was not registered and has been removed.')
                     .addFields([
                         { name: 'Reason', value: reason, inline: false },
                         { name: 'What you can do', value: 'You can try voting again if the issue has been resolved, or use slash commands instead of reactions.', inline: false }

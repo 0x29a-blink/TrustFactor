@@ -27,7 +27,7 @@ module.exports = {
         serverConfig.is_view_only = true;
       }
       await showMainConfigMenu(interaction, serverConfig);
-      logger.command(`Config menu displayed successfully`, 'CONFIG');
+      logger.command('Config menu displayed successfully', 'CONFIG');
     } catch (error) {
       logger.errorWithStack('Error handling config command', error, 'CONFIG');
       await interaction.reply({ content: '❌ There was an error loading the configuration. Please try again.', flags: MessageFlags.Ephemeral });

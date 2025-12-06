@@ -1,6 +1,7 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageFlags, AttachmentBuilder } = require('discord.js');
 const DatabaseUtils = require('../utils/database');
 const logger = require('../utils/logger');
+const { renderLeaderboardImage } = require('../utils/leaderboardImage');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -39,13 +40,16 @@ module.exports = {
                 serverConfig: serverConfig
             };
 
+            await interaction.deferReply();
+
             // Generate initial leaderboard
-            const { embed, components } = await generateLeaderboard(interaction, filterState);
+            const { embed, components, files } = await generateLeaderboard(interaction, filterState);
             
-            const response = await interaction.reply({ 
+            const response = await interaction.editReply({ 
                 embeds: [embed], 
-                components: components
-            }).then(() => interaction.fetchReply());
+                components: components,
+                files: files
+            });
 
             // Create collector for button interactions
             const collector = response.createMessageComponentCollector({
@@ -116,12 +120,13 @@ module.exports = {
                     }
 
                     // Generate updated leaderboard
-                    const { embed: newEmbed, components: newComponents } = await generateLeaderboard(buttonInteraction, filterState);
+                    const { embed: newEmbed, components: newComponents, files: newFiles } = await generateLeaderboard(buttonInteraction, filterState);
                     
                     // Edit the original response
                     await buttonInteraction.editReply({ 
                         embeds: [newEmbed], 
-                        components: newComponents 
+                        components: newComponents,
+                        files: newFiles
                     });
                 } catch (error) {
                     logger.errorWithStack('Error handling button interaction', error, 'LEADERBOARD');
@@ -173,10 +178,16 @@ module.exports = {
 
         } catch (error) {
             logger.errorWithStack('Error fetching leaderboard', error, 'LEADERBOARD');
-            await interaction.reply({
-                content: '❌ There was an error fetching the leaderboard. Please try again.',
-                flags: MessageFlags.Ephemeral
-            });
+            if (interaction.deferred) {
+                await interaction.editReply({
+                    content: '❌ There was an error fetching the leaderboard. Please try again.'
+                });
+            } else {
+                await interaction.reply({
+                    content: '❌ There was an error fetching the leaderboard. Please try again.',
+                    flags: MessageFlags.Ephemeral
+                });
+            }
         }
     },
 };
@@ -185,7 +196,7 @@ module.exports = {
  * Generate leaderboard embed and components based on filter state
  * @param {Object} interaction - Discord interaction object
  * @param {Object} filterState - Current filter state
- * @returns {Object} Object containing embed and components
+ * @returns {Object} Object containing embed, components and files
  */
 async function generateLeaderboard(interaction, filterState) {
     const { type, limit, serverId, serverConfig } = filterState;
@@ -205,7 +216,7 @@ async function generateLeaderboard(interaction, filterState) {
     switch (type) {
         case 'positive':
             filteredData = allScores.filter(entry => entry.total_score > 0).slice(0, limit);
-            title = '🏆 Positive Leaderboard';
+            title = 'Positive Leaderboard';
             description = `Top ${Math.min(filteredData.length, limit)} users with positive scores`;
             color = '#00ff00';
             break;
@@ -214,8 +225,8 @@ async function generateLeaderboard(interaction, filterState) {
             filteredData = allScores.filter(entry => entry.total_score < 0)
                 .sort((a, b) => a.total_score - b.total_score) // Sort by lowest (most negative) first
                 .slice(0, limit);
-            title = '💀 Negative Leaderboard';
-            description = `Users with negative scores (most negative first)`;
+            title = 'Negative Leaderboard';
+            description = 'Users with negative scores (most negative first)';
             color = '#ff0000';
             break;
             
@@ -224,8 +235,8 @@ async function generateLeaderboard(interaction, filterState) {
             filteredData = allScores
                 .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
                 .slice(0, limit);
-            title = '⚡ Recently Active';
-            description = `Users with most recent score changes`;
+            title = 'Recently Active';
+            description = 'Users with most recent score changes';
             color = '#ffff00';
             break;
             
@@ -235,16 +246,16 @@ async function generateLeaderboard(interaction, filterState) {
                 .filter(entry => entry.total_score !== 0)
                 .sort((a, b) => Math.abs(a.total_score) - Math.abs(b.total_score))
                 .slice(0, limit);
-            title = '🎲 Most Contested';
-            description = `Users with scores closest to zero (most volatile)`;
+            title = 'Most Contested';
+            description = 'Users with scores closest to zero (most volatile)';
             color = '#ff8c00';
             break;
             
         case 'all':
         default:
             filteredData = allScores.slice(0, limit);
-            title = '📊 Complete Leaderboard';
-            description = `All users ranked by score`;
+            title = 'Complete Leaderboard';
+            description = 'All users ranked by score';
             color = serverConfig.embed_color || '#5865F2';
             break;
     }
@@ -255,60 +266,46 @@ async function generateLeaderboard(interaction, filterState) {
         finalDescription += `\n\n🔗 **Sync Group:** ${syncStatus.sync_groups.group_name}\n*Scores combined across all synced servers*`;
     }
     
+    // Prepare data for image generation
+    const imageEntries = [];
+    for (const entry of filteredData) {
+        let displayName = 'Unknown User';
+        let avatarUrl = null;
+        try {
+            const user = await interaction.client.users.fetch(entry.user_id);
+            displayName = user.globalName || user.username;
+            avatarUrl = user.displayAvatarURL({ extension: 'png', size: 128 });
+        } catch (error) {
+            // Keep default
+        }
+        
+        imageEntries.push({
+            displayName,
+            avatarUrl,
+            score: entry.total_score,
+            updatedAt: entry.updated_at
+        });
+    }
+
+    // Generate Image
+    const imageBuffer = await renderLeaderboardImage({
+        title,
+        description: finalDescription,
+        entries: imageEntries,
+        filterType: type,
+        totalUsers: allScores.length
+    });
+
+    const attachment = new AttachmentBuilder(imageBuffer, { name: 'leaderboard.png' });
+
     const embed = new EmbedBuilder()
         .setColor(color)
         .setTitle(title)
-        .setDescription(finalDescription)
+        .setImage('attachment://leaderboard.png')
+        .setFooter({ 
+            text: `Filter: ${type.charAt(0).toUpperCase() + type.slice(1)} | Showing ${filteredData.length}/${limit} users | Expires in 5 minutes` 
+        })
         .setTimestamp();
-
-    if (filteredData.length === 0) {
-        embed.setDescription('No users found for this filter!');
-        embed.addFields([{
-            name: 'Try a different filter',
-            value: 'Use the buttons below to switch between different leaderboard views.',
-            inline: false
-        }]);
-    } else {
-        // Build leaderboard text
-        let leaderboardText = '';
-        const medals = ['🥇', '🥈', '🥉'];
-        
-        for (let i = 0; i < filteredData.length; i++) {
-            const entry = filteredData[i];
-            const position = i + 1;
-            const medal = i < 3 ? medals[i] : `${position}.`;
-            
-            try {
-                const user = await interaction.client.users.fetch(entry.user_id);
-                const displayName = user.globalName || user.username;
-                
-                // Add special indicators based on filter type
-                let indicator = '';
-                if (type === 'recent') {
-                    const timeDiff = Date.now() - new Date(entry.updated_at).getTime();
-                    const hoursAgo = Math.floor(timeDiff / (1000 * 60 * 60));
-                    indicator = ` ⏰ ${hoursAgo}h ago`;
-                } else if (type === 'volatile') {
-                    indicator = ` 🎯 ${Math.abs(entry.total_score)} from zero`;
-                }
-                
-                leaderboardText += `${medal} **${displayName}** | **${entry.total_score}** point${Math.abs(entry.total_score) !== 1 ? 's' : ''}${indicator}\n`;
-            } catch (error) {
-                leaderboardText += `${medal} **Unknown User** | **${entry.total_score}** point${Math.abs(entry.total_score) !== 1 ? 's' : ''}\n`;
-            }
-        }
-
-        embed.addFields([{
-            name: 'Rankings',
-            value: leaderboardText,
-            inline: false
-        }]);
-    }
-
-    // Add footer with filter info
-    embed.setFooter({ 
-        text: `Filter: ${type.charAt(0).toUpperCase() + type.slice(1)} | Showing ${filteredData.length}/${limit} users | Expires in 5 minutes` 
-    });
 
     // Create button components
     const filterRow = new ActionRowBuilder()
@@ -358,6 +355,7 @@ async function generateLeaderboard(interaction, filterState) {
 
     return {
         embed,
-        components: [filterRow, controlRow]
+        components: [filterRow, controlRow],
+        files: [attachment]
     };
 }

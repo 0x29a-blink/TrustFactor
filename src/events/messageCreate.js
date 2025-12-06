@@ -52,7 +52,7 @@ module.exports = {
             } else if (originalMessage.content && originalMessage.content.trim()) {
                 reasonText = originalMessage.content;
             } else {
-                reasonText = "Reply to image";
+                reasonText = 'Reply to image';
             }
             
             // Validate point range

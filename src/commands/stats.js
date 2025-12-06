@@ -1,6 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, MessageFlags, AttachmentBuilder } = require('discord.js');
-// Toggle between 'embed' and 'image' output
-const STATS_OUTPUT_MODE = (process.env.STATS_STYLE || 'embed').toLowerCase(); // 'embed' | 'image'
+const { SlashCommandBuilder, MessageFlags, AttachmentBuilder } = require('discord.js');
 const os = require('os');
 const { supabase } = require('../config/database');
 const logger = require('../utils/logger');
@@ -100,7 +98,7 @@ async function getPointsSummary() {
             .filter(r => (r.total_score || 0) < 0)
             .reduce((s, r) => s + Math.abs(r.total_score || 0), 0);
         }
-      } catch (_) {}
+      } catch (_) { /* ignore */ }
     }
 
     if (Object.is(granted, -0)) granted = 0;
@@ -178,41 +176,19 @@ module.exports = {
         }
       }
 
-      if (STATS_OUTPUT_MODE === 'image') {
-        const { renderStatsImage } = require('../utils/statsImage');
-        const img = await renderStatsImage({
-          shards: shardCount,
-          serverCount,
-          uptime: uptimeStr,
-          cpuPct,
-          memPct,
-          pointsGranted: points.granted,
-          pointsRemovedAbs: points.removedAbs,
-          totalVotes,
-        });
-        const attachment = new AttachmentBuilder(img, { name: 'trustfactor-stats.png' });
-        return await interaction.editReply({ files: [attachment] });
-      } else {
-        const embed = new EmbedBuilder()
-          .setColor('#5865F2')
-          .setTitle('TrustFactor Bot — Live Stats')
-          .setDescription('Insight across shards and servers')
-          .addFields(
-            // Row 1
-            { name: 'Shards', value: String(shardCount), inline: true },
-            { name: 'Server Count', value: String(serverCount), inline: true },
-            { name: 'Uptime', value: uptimeStr, inline: true },
-            // Row 2
-            { name: 'Total Votes Cast', value: String(totalVotes), inline: true },
-            { name: 'Points Granted', value: `+${Math.max(0, Number(points.granted || 0))}`, inline: true },
-            { name: 'Points Removed', value: `-${Math.max(0, Number(points.removedAbs || 0))}`, inline: true },
-            // Row 3
-            { name: 'CPU Usage', value: `${cpuPct.toFixed(1)}%`, inline: true },
-            { name: 'Memory Usage', value: `${memPct.toFixed(1)}%`, inline: true },
-          )
-          .setTimestamp(new Date());
-        return await interaction.editReply({ embeds: [embed] });
-      }
+      const { renderStatsImage } = require('../utils/statsImage');
+      const img = await renderStatsImage({
+        shards: shardCount,
+        serverCount,
+        uptime: uptimeStr,
+        cpuPct,
+        memPct,
+        pointsGranted: points.granted,
+        pointsRemovedAbs: points.removedAbs,
+        totalVotes,
+      });
+      const attachment = new AttachmentBuilder(img, { name: 'trustfactor-stats.png' });
+      return await interaction.editReply({ files: [attachment] });
     } catch (error) {
       logger.errorWithStack('Error executing stats command', error, 'STATS');
       if (interaction.deferred || interaction.replied) {

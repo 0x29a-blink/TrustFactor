@@ -14,7 +14,7 @@ async function getLeaderboard(serverId, limit = 10) {
       if (!rpcError && Array.isArray(rpcData)) {
         return rpcData.map(row => ({ user_id: row.user_id, total_score: Number(row.total_score), updated_at: row.updated_at }));
       }
-    } catch (_) {}
+    } catch (_) { /* ignore */ }
     const { data, error } = await supabase
       .from('scores')
       .select('user_id::text, total_score, updated_at')
@@ -43,10 +43,10 @@ async function assignLeaderboardRoles(serverId, guild) {
     logger.config(`🔍 Starting leaderboard role assignment for server ${serverId}`, 'LEADERBOARD-ROLES');
     const serverConfig = await require('./../db/config').getServerConfig(serverId);
     const leaderboardRoles = serverConfig.leaderboard_roles || {};
-    logger.object(`📋 Leaderboard roles config:`, leaderboardRoles, 'LEADERBOARD-ROLES');
+    logger.object('📋 Leaderboard roles config:', leaderboardRoles, 'LEADERBOARD-ROLES');
 
     if (Object.keys(leaderboardRoles).length === 0) {
-      logger.config(`❌ No leaderboard roles configured`, 'LEADERBOARD-ROLES');
+      logger.config('❌ No leaderboard roles configured', 'LEADERBOARD-ROLES');
       return { assigned: 0, removed: 0, errors: [] };
     }
 
@@ -78,8 +78,8 @@ async function assignLeaderboardRoles(serverId, guild) {
     }
     negativeLeaderboard = negativeLeaderboard.slice(0, 10);
 
-    logger.object(`📊 Final Positive leaderboard:`, positiveLeaderboard.map(e => `${e.user_id}: ${e.total_score}`), 'LEADERBOARD-ROLES');
-    logger.object(`📊 Final Negative leaderboard:`, negativeLeaderboard.map(e => `${e.user_id}: ${e.total_score}`), 'LEADERBOARD-ROLES');
+    logger.object('📊 Final Positive leaderboard:', positiveLeaderboard.map(e => `${e.user_id}: ${e.total_score}`), 'LEADERBOARD-ROLES');
+    logger.object('📊 Final Negative leaderboard:', negativeLeaderboard.map(e => `${e.user_id}: ${e.total_score}`), 'LEADERBOARD-ROLES');
 
     const results = { assigned: 0, removed: 0, errors: [] };
 

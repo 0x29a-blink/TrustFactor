@@ -408,7 +408,7 @@ async function clearAllLeaderboardRoles(interaction, serverConfig) {
         for (const [, member] of membersWithRole) {
           await member.roles.remove(roleIdString, 'Leaderboard roles cleared');
         }
-      } catch {}
+      } catch { /* ignore */ }
     }
 
     await updateServerConfig(serverId, { leaderboard_roles: {} });
@@ -455,7 +455,7 @@ async function toggleLeaderboardRoleStrategy(interaction, serverConfig, leaderbo
   // Attempt to apply roles immediately (best-effort)
   try {
     await DatabaseUtils.assignLeaderboardRoles(serverId, interaction.guild);
-  } catch {}
+  } catch { /* ignore */ }
 
   const embed = new EmbedBuilder()
     .setColor('#00ff00')
@@ -471,7 +471,7 @@ async function toggleLeaderboardRoleStrategy(interaction, serverConfig, leaderbo
     try {
       const freshServerConfig = await DatabaseUtils.getServerConfig(serverId);
       await showLeaderboardRolesConfig(interaction, freshServerConfig);
-    } catch {}
+    } catch { /* ignore */ }
   }, 2000);
 }
 
@@ -541,7 +541,7 @@ async function handleAddLeaderboardRoleModal(interaction, serverId) {
 
   const canAssign = require('./autoRoles').getAssignableRoles(interaction.guild).some((r) => String(r.id) === roleIdString);
   if (!canAssign) {
-    await interaction.followUp({ content: "❌ This role cannot be assigned by the bot.", flags: MessageFlags.Ephemeral });
+    await interaction.followUp({ content: '❌ This role cannot be assigned by the bot.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -552,7 +552,7 @@ async function handleAddLeaderboardRoleModal(interaction, serverId) {
 
   try {
     await DatabaseUtils.assignLeaderboardRoles(serverId, interaction.guild);
-  } catch {}
+  } catch { /* ignore */ }
 
   await logConfigChange(
     interaction,

@@ -1,48 +1,23 @@
-const puppeteer = require('puppeteer');
+const { renderHtmlToImage } = require('./htmlRenderer');
 const logger = require('./logger');
 
-// Persistent renderer state
-let browser = null;
-let page = null;
-let initPromise = null;
-let queue = Promise.resolve();
+const WIDTH = 500;
+const HEIGHT = 400;
 
-async function ensureRenderer(options = {}) {
-  if (page && typeof page.isClosed === 'function' && !page.isClosed()) {
-    return page;
-  }
-  if (!initPromise) {
-    initPromise = (async () => {
-      try {
-        if (!browser) {
-          browser = await puppeteer.launch({
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-            headless: 'new',
-          });
-        }
-        page = await browser.newPage();
-        const width = options.width || 1200;
-        const height = options.height || 680;
-        await page.setViewport({ width, height, deviceScaleFactor: 2 });
-        return page;
-      } catch (error) {
-        // Reset state so next call can retry
-        try { await browser?.close(); } catch (_) {}
-        browser = null; page = null; initPromise = null;
-        throw error;
-      }
-    })();
-  }
-  await initPromise;
-  return page;
-}
-
-async function runExclusive(fn) {
-  const task = queue.then(fn, fn);
-  // Prevent unhandled rejections from breaking the chain
-  queue = task.then(() => {}, () => {});
-  return task;
-}
+const COLORS = {
+  bg: '#090b10',         // Very dark blue/black
+  cardBg: '#161b2e',     // Main card background
+  accent: '#5865F2',     // Discord Blurple
+  success: '#2ecc71',
+  danger: '#e74c3c',
+  warning: '#f1c40f',
+  textTitle: '#ffffff',
+  textLabel: '#8b9bb4',  // Muted blue-grey
+  textValue: '#ffffff',
+  border: 'rgba(255,255,255,0.08)',
+  divider: 'rgba(255,255,255,0.04)',
+  systemBg: 'rgba(0, 0, 0, 0.2)'
+};
 
 function formatNumber(n) {
   try {
@@ -52,155 +27,282 @@ function formatNumber(n) {
   }
 }
 
-function buildHtml(stats) {
-  const {
-    shards,
-    serverCount,
-    uptime,
-    cpuPct,
-    memPct,
-    pointsGranted,
-    pointsRemovedAbs,
-    totalVotes,
-  } = stats;
-
-  // Sanitize basic values
-  const safe = {
-    shards: formatNumber(shards ?? 1),
-    servers: formatNumber(serverCount ?? 0),
-    uptime: uptime || '0s',
-    cpu: `${(cpuPct ?? 0).toFixed(1)}%`,
-    mem: `${(memPct ?? 0).toFixed(1)}%`,
-    granted: formatNumber(pointsGranted ?? 0),
-    removed: formatNumber(pointsRemovedAbs ?? 0),
-    votes: formatNumber(totalVotes ?? 0),
-    timestamp: new Date().toLocaleString(),
-  };
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TrustFactor Bot — Stats</title>
-  <style>
-    :root {
-      --bg: #0b1020;
-      --card: #121935;
-      --muted: #9aa4bf;
-      --primary: #5865F2; /* Discord blurple */
-      --success: #2ecc71;
-      --danger: #e74c3c;
-      --warning: #f1c40f;
-    }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; }
-    body {
-      width: 1200px; height: 680px;
-      background:
-        radial-gradient(1200px 800px at 1000px -100px, rgba(88,101,242,0.16), transparent),
-        radial-gradient(900px 600px at 100px 780px, rgba(46,204,113,0.14), transparent),
-        var(--bg);
-      color: #fff; font-family: 'Segoe UI', Roboto, Inter, system-ui, -apple-system, Arial, sans-serif;
-      display: flex; flex-direction: column; padding: 24px 26px; gap: 16px;
-    }
-    .board-title { text-align: center; font-size: 26px; font-weight: 900; letter-spacing: 0.4px; color: #e8ecff; }
-    .grid { display: grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; gap: 14px; }
-    .card { background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 18px; box-shadow: 0 12px 40px rgba(0,0,0,0.28) inset; display: flex; flex-direction: column; gap: 10px; justify-content: center; }
-    .k { font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--muted); font-weight: 800; }
-    .v { font-size: 40px; font-weight: 900; letter-spacing: 0.2px; line-height: 1.05; }
-    .row { display: flex; align-items: center; justify-content: space-between; }
-    .progress { width: 100%; height: 12px; background: rgba(255,255,255,0.08); border-radius: 999px; overflow: hidden; }
-    .progress .bar { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #6c77ff, #4c56e9); }
-    .progress.mem .bar { background: linear-gradient(90deg, #f5c84b, #ff9f43); }
-    .foot { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 8px; }
-    .pair { display: flex; gap: 8px; align-items: baseline; }
-    .pair .pos { color: var(--success); font-weight: 800; }
-    .pair .neg { color: var(--danger); font-weight: 800; }
-  </style>
-  </head>
-  <body>
-    <div class="board-title">TrustFactor • Live Stats</div>
-    <div class="grid">
-      <!-- Row 1 -->
-      <div class="card"><div class="k">Shards</div><div class="v">${safe.shards}</div></div>
-      <div class="card"><div class="k">Server Count</div><div class="v">${safe.servers}</div></div>
-      <div class="card"><div class="k">Uptime</div><div class="v">${safe.uptime}</div></div>
-      <!-- Row 2 -->
-      <div class="card"><div class="k">Total Votes Cast</div><div class="v">${safe.votes}</div></div>
-      <div class="card"><div class="k">Points Granted</div><div class="v" style="color: var(--success);">+${safe.granted}</div></div>
-      <div class="card"><div class="k">Points Removed</div><div class="v" style="color: var(--danger);">-${safe.removed}</div></div>
-      <!-- Row 3 -->
-      <div class="card">
-        <div class="k">CPU Usage</div>
-        <div class="v">${safe.cpu}</div>
-        <div class="progress"><div class="bar" style="width:${Math.min(100, Number(stats.cpuPct || 0)).toFixed(1)}%"></div></div>
-      </div>
-      <div class="card">
-        <div class="k">Memory Usage</div>
-        <div class="v">${safe.mem}</div>
-        <div class="progress mem"><div class="bar" style="width:${Math.min(100, Number(stats.memPct || 0)).toFixed(1)}%"></div></div>
-      </div>
-    </div>
-    <div class="foot">
-      <div class="pair"><span>Points</span><span class="pos">+${safe.granted}</span><span class="neg">-${safe.removed}</span></div>
-      <div>Updated • ${safe.timestamp}</div>
-    </div>
-  </body>
-  </html>`;
-}
-
 async function renderStatsImage(stats, options = {}) {
-  const width = options.width || 1200;
-  const height = options.height || 680;
-  const html = buildHtml(stats);
-
-  return runExclusive(async () => {
-    try {
-      const p = await ensureRenderer({ width, height });
-      // Ensure viewport matches requested options
-      const vp = p.viewport() || {};
-      if (vp.width !== width || vp.height !== height) {
-        await p.setViewport({ width, height, deviceScaleFactor: 2 });
-      }
-      await p.setContent(html, { waitUntil: 'load' });
-      const buffer = await p.screenshot({ type: 'png' });
-      return buffer;
-    } catch (error) {
-      logger.errorWithStack('Failed to render stats image', error, 'RENDER');
-      // Try to reset renderer state for next call
-      try { await page?.close(); } catch (_) {}
-      try { await browser?.close(); } catch (_) {}
-      browser = null; page = null; initPromise = null;
-      throw error;
-    }
-  });
-}
-
-async function warmStatsRenderer(options = {}) {
   try {
-    await ensureRenderer(options);
-    return true;
+    const width = options.width || WIDTH;
+    const height = options.height || HEIGHT;
+
+    const {
+      shards, serverCount, uptime, cpuPct, memPct,
+      pointsGranted, pointsRemovedAbs, totalVotes
+    } = stats;
+
+    const safe = {
+      shards: formatNumber(shards ?? 1),
+      servers: formatNumber(serverCount ?? 0),
+      uptime: uptime || '0s',
+      cpu: Math.min(100, Number(cpuPct || 0)),
+      mem: Math.min(100, Number(memPct || 0)),
+      granted: formatNumber(pointsGranted ?? 0),
+      removed: formatNumber(pointsRemovedAbs ?? 0),
+      votes: formatNumber(totalVotes ?? 0),
+      timestamp: new Date().toLocaleString(),
+    };
+
+    const html = `
+      <style>
+        body {
+          font-family: 'Segoe UI', Roboto, sans-serif;
+          background-color: ${COLORS.cardBg};
+          color: ${COLORS.textValue};
+          width: ${width}px;
+          height: ${height}px;
+          border-radius: 16px;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          position: relative;
+        }
+
+        /* Background Gradients */
+        .bg-gradient-1 {
+          position: absolute;
+          top: 0; right: 0;
+          width: 400px; height: 400px;
+          background: radial-gradient(circle at center, rgba(88, 101, 242, 0.06) 0%, transparent 70%);
+          transform: translate(30%, -30%);
+          pointer-events: none;
+        }
+        .bg-gradient-2 {
+          position: absolute;
+          bottom: 0; left: 0;
+          width: 300px; height: 300px;
+          background: radial-gradient(circle at center, rgba(46, 204, 113, 0.04) 0%, transparent 70%);
+          transform: translate(-30%, 30%);
+          pointer-events: none;
+        }
+
+        /* Header */
+        .header {
+          text-align: center;
+          padding-top: 20px;
+          z-index: 1;
+        }
+        .title {
+          font-size: 22px;
+          font-weight: 900;
+          color: ${COLORS.textTitle};
+        }
+        .subtitle {
+          font-size: 12px;
+          font-weight: 500;
+          color: ${COLORS.textLabel};
+          margin-top: 2px;
+        }
+
+        /* Meta Stats */
+        .meta-stats {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          margin-top: 20px;
+          gap: 20px;
+          position: relative;
+          z-index: 1;
+        }
+        .meta-item {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .meta-label {
+          font-size: 11px;
+          font-weight: 600;
+          color: ${COLORS.textLabel};
+        }
+        .meta-value {
+          font-size: 12px;
+          font-weight: 600;
+          color: ${COLORS.textValue};
+        }
+        .meta-left { text-align: right; }
+        .meta-right { text-align: left; }
+        
+        .divider {
+          height: 1px;
+          background: ${COLORS.divider};
+          margin: 10px 40px;
+        }
+
+        /* Grid Layout for Hero & Points */
+        .stats-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          padding: 10px 0;
+          z-index: 1;
+        }
+        .stat-cell {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          text-align: center;
+          padding: 10px 0;
+        }
+        
+        /* Hero Stats */
+        .hero-label {
+          font-size: 11px;
+          font-weight: 700;
+          color: ${COLORS.accent};
+          margin-bottom: 4px;
+        }
+        .hero-value {
+          font-size: 36px;
+          font-weight: 800;
+          color: ${COLORS.textValue};
+          line-height: 1;
+        }
+
+        /* Points Stats */
+        .point-label {
+          font-size: 10px;
+          font-weight: 600;
+          color: ${COLORS.textLabel};
+          margin-bottom: 4px;
+        }
+        .point-value {
+          font-size: 20px;
+          font-weight: 700;
+        }
+
+        /* System Footer */
+        .footer-section {
+          margin-top: auto;
+          height: 110px;
+          background: ${COLORS.systemBg};
+          border-top: 1px solid ${COLORS.border};
+          padding: 20px 50px;
+          display: flex;
+          flex-direction: column;
+          gap: 15px;
+          z-index: 1;
+        }
+
+        .progress-row {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .progress-header {
+          display: flex;
+          justify-content: space-between;
+          font-size: 10px;
+          font-weight: 600;
+        }
+        .progress-label { color: ${COLORS.textLabel}; text-transform: uppercase; }
+        .progress-percent { color: ${COLORS.textValue}; }
+        
+        .progress-track {
+          height: 6px;
+          width: 100%;
+          background: rgba(255,255,255,0.05);
+          border-radius: 3px;
+          overflow: hidden;
+        }
+        .progress-fill {
+          height: 100%;
+          border-radius: 3px;
+        }
+
+        .timestamp {
+          text-align: center;
+          color: ${COLORS.textLabel};
+          font-size: 9px;
+          margin-top: 6px;
+        }
+      </style>
+
+      <div class="bg-gradient-1"></div>
+      <div class="bg-gradient-2"></div>
+
+      <div class="header">
+        <div class="title">TRUSTFACTOR</div>
+        <div class="subtitle">SYSTEM ANALYTICS</div>
+      </div>
+
+      <div class="meta-stats">
+        <div class="meta-item meta-left">
+          <div class="meta-label">UPTIME:</div>
+          <div class="meta-value">${safe.uptime}</div>
+        </div>
+        <div class="meta-item meta-right">
+          <div class="meta-label">SHARDS:</div>
+          <div class="meta-value">${safe.shards}</div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="stats-grid">
+        <div class="stat-cell">
+          <div class="hero-label">ACTIVE SERVERS</div>
+          <div class="hero-value">${safe.servers}</div>
+        </div>
+        <div class="stat-cell">
+          <div class="hero-label">TOTAL VOTES</div>
+          <div class="hero-value">${safe.votes}</div>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-cell">
+          <div class="point-label">POINTS GRANTED</div>
+          <div class="point-value" style="color: ${COLORS.success}">+${safe.granted}</div>
+        </div>
+        <div class="stat-cell">
+          <div class="point-label">POINTS REMOVED</div>
+          <div class="point-value" style="color: ${COLORS.danger}">-${safe.removed}</div>
+        </div>
+      </div>
+
+      <div class="footer-section">
+        <div class="progress-row">
+          <div class="progress-header">
+            <span class="progress-label">CPU Load</span>
+            <span class="progress-percent">${safe.cpu.toFixed(1)}%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" style="width: ${safe.cpu}%; background-color: ${COLORS.accent}"></div>
+          </div>
+        </div>
+
+        <div class="progress-row">
+          <div class="progress-header">
+            <span class="progress-label">Memory Usage</span>
+            <span class="progress-percent">${safe.mem.toFixed(1)}%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" style="width: ${safe.mem}%; background-color: ${COLORS.warning}"></div>
+          </div>
+        </div>
+
+        <div class="timestamp">Generated at: ${safe.timestamp}</div>
+      </div>
+    `;
+
+    return await renderHtmlToImage(html, width, height);
   } catch (error) {
-    logger.errorWithStack('Failed to warm stats renderer', error, 'RENDER');
-    return false;
+    logger.errorWithStack('Failed to render stats image', error, 'RENDER');
+    throw error;
   }
 }
 
-async function shutdownStatsRenderer() {
-  try {
-    if (page) { try { await page.close(); } catch (_) {} }
-    if (browser) { try { await browser.close(); } catch (_) {} }
-  } finally {
-    browser = null; page = null; initPromise = null; queue = Promise.resolve();
-  }
-}
+// Shims - these are no longer needed with htmlRenderer, but kept for API compatibility
+async function warmStatsRenderer() { return true; }
+async function shutdownStatsRenderer() { return true; }
 
 module.exports = {
   renderStatsImage,
   warmStatsRenderer,
   shutdownStatsRenderer,
-  buildHtml,
 };
-
-

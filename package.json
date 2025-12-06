@@ -7,6 +7,8 @@
     "start:sharded": "node src/sharder.js",
     "dev": "nodemon src/index.js",
     "test": "jest",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "migrate": "echo Use Supabase CLI migrations instead (see README) && exit 0",
     "deploy-commands": "node src/utils/deploy-commands.js",
     "security:apply": "echo Use Supabase CLI (supabase db push) && exit 0",
@@ -32,14 +34,17 @@
   "author": "TrustFactor Bot Team",
   "license": "MIT",
   "dependencies": {
-    "puppeteer": "^22.15.0",
-    "discord.js": "^14.14.1",
     "@supabase/supabase-js": "^2.39.7",
-    "dotenv": "^16.4.1"
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.1",
+    "playwright": "^1.57.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2",
-    "jest": "^29.7.0"
+    "@eslint/js": "^9.39.1",
+    "eslint": "^9.39.1",
+    "globals": "^16.5.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.2"
   },
   "engines": {
     "node": ">=18.0.0"

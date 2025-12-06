@@ -52,23 +52,66 @@ const TOGGLE_IDS = new Set([
   'config_failed_feedback_toggle',
 ]);
 
-function canHandle(customId) {
-  return (
-    NAV_IDS.has(customId) ||
-    SIMPLE_SELECTS[customId] ||
-    TOGGLE_IDS.has(customId) ||
-    customId === 'config_log_channel_select' ||
-    // feature actions
-    customId.startsWith('config_autoroles') ||
-    customId.startsWith('config_reactions') ||
-    customId.startsWith('config_blocked_channels') ||
-    customId.startsWith('config_leaderboard_roles') ||
-    customId.startsWith('config_leaderboard_role_') ||
-    customId.startsWith('config_autorole_') ||
-    customId === 'config_reaction_edit_select' ||
-    customId === 'config_reaction_remove_select'
-  );
-}
+const ACTION_HANDLERS = {
+  // Feature routing
+  config_autoroles: (i, c) => AutoRoles.showAutoRolesConfig(i, c),
+  config_reactions: (i, c) => Reactions.showReactionConfig(i, c),
+  config_blocked_channels: (i, c) => Blocked.showBlockedChannelsConfig(i, c),
+  config_leaderboard_roles: (i, c) => Leaderboard.showLeaderboardRolesConfig(i, c),
+
+  // AutoRoles actions
+  config_autoroles_add: (i) => AutoRoles.showAddAutoRoleModal(i),
+  config_autoroles_edit: (i, c) => AutoRoles.showEditAutoRoleSelect(i, c),
+  config_autoroles_remove: (i, c) => AutoRoles.showRemoveAutoRoleSelect(i, c),
+  config_autoroles_test: (i, c) => AutoRoles.showAutoRoleTestResults(i, c),
+  config_autoroles_clear_all: (i, c) => AutoRoles.showClearAllAutoRolesConfirmation(i, c),
+  config_autoroles_confirm_clear: (i, c) => AutoRoles.clearAllAutoRoles(i, c),
+  config_autoroles_cancel_clear: (i, c) => AutoRoles.showAutoRolesConfig(i, c),
+
+  // Reactions actions
+  config_reactions_add: (i) => Reactions.startEmojiAddProcess(i),
+  config_reactions_edit: (i, c) => Reactions.showEditReactionSelect(i, c),
+  config_reactions_remove: (i, c) => Reactions.showRemoveReactionSelect(i, c),
+  config_reactions_defaults: (i, c) => Reactions.showDefaultReactionsPreview(i, c),
+  config_reactions_confirm_defaults: (i, c) => Reactions.setupDefaultReactions(i, c),
+  config_reactions_cancel_defaults: (i, c) => Reactions.showReactionConfig(i, c),
+  config_reactions_clear: (i) => Reactions.showClearAllReactionsConfirmation(i),
+  config_reactions_confirm_clear: (i) => Reactions.clearAllReactions(i),
+  config_reactions_cancel_clear: (i, c) => Reactions.showReactionConfig(i, c),
+  config_reactions_cancel_add: (i) => Reactions.handleEmojiAddCancel(i),
+  config_reaction_remove_select: (i, c) => {
+    const emoji = i.values[0];
+    return Reactions.removeReaction(i, c, emoji);
+  },
+
+  // Blocked Channels actions
+  config_blocked_channels_remove: (i, c) => Blocked.showRemoveBlockedChannelSelect(i, c),
+  config_blocked_channels_clear: (i, c) => Blocked.showClearAllBlockedChannelsConfirmation(i, c),
+  config_blocked_channels_clear_confirm: (i, c) => Blocked.clearAllBlockedChannels(i, c),
+  config_blocked_channels_cancel_clear: (i, c) => Blocked.showBlockedChannelsConfig(i, c),
+  config_blocked_channels_cancel_add: (i, c) => Blocked.showBlockedChannelsConfig(i, c),
+  config_blocked_channels_remove_select: (i, c) => {
+    const value = i.values[0];
+    return Blocked.removeBlockedChannel(i, c, value);
+  },
+  config_blocked_channels_add: (i) => Blocked.startBlockedChannelAddProcess(i),
+
+  // Leaderboard roles actions
+  config_leaderboard_roles_add_positive: (i) => Leaderboard.showAddLeaderboardRoleModal(i, 'positive'),
+  config_leaderboard_roles_add_negative: (i) => Leaderboard.showAddLeaderboardRoleModal(i, 'negative'),
+  config_leaderboard_roles_edit: (i, c) => Leaderboard.showEditLeaderboardRoleSelect(i, c),
+  config_leaderboard_roles_remove: (i, c) => Leaderboard.showRemoveLeaderboardRoleSelect(i, c),
+  config_leaderboard_roles_test: (i, c) => Leaderboard.showLeaderboardRoleTestResults(i, c),
+  config_leaderboard_roles_clear_all: (i, c) => Leaderboard.showClearAllLeaderboardRolesConfirmation(i, c),
+  config_leaderboard_roles_confirm_clear: (i, c) => Leaderboard.clearAllLeaderboardRoles(i, c),
+  config_leaderboard_roles_cancel_clear: (i, c) => Leaderboard.showLeaderboardRolesConfig(i, c),
+  config_leaderboard_roles_strategy_positive: (i, c) => Leaderboard.toggleLeaderboardRoleStrategy(i, c, 'positive'),
+  config_leaderboard_roles_strategy_negative: (i, c) => Leaderboard.toggleLeaderboardRoleStrategy(i, c, 'negative'),
+  config_leaderboard_role_remove_select: (i, c) => {
+    const [position, roleId, leaderboardType] = i.values[0].split(':');
+    return Leaderboard.removeLeaderboardRole(i, c, position, roleId, leaderboardType);
+  },
+};
 
 async function handleConfigInteraction(interaction) {
   if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
@@ -183,64 +226,11 @@ async function handleConfigInteraction(interaction) {
       return;
     }
 
-    // Feature routing
-    const id = interaction.customId;
-    if (id === 'config_autoroles') return AutoRoles.showAutoRolesConfig(interaction, serverConfig);
-    if (id === 'config_reactions') return Reactions.showReactionConfig(interaction, serverConfig);
-    if (id === 'config_blocked_channels') return Blocked.showBlockedChannelsConfig(interaction, serverConfig);
-    if (id === 'config_leaderboard_roles') return Leaderboard.showLeaderboardRolesConfig(interaction, serverConfig);
-
-    // AutoRoles actions
-    if (id === 'config_autoroles_add') return AutoRoles.showAddAutoRoleModal(interaction);
-    if (id === 'config_autoroles_edit') return AutoRoles.showEditAutoRoleSelect(interaction, serverConfig);
-    if (id === 'config_autoroles_remove') return AutoRoles.showRemoveAutoRoleSelect(interaction, serverConfig);
-    if (id === 'config_autoroles_test') return AutoRoles.showAutoRoleTestResults(interaction, serverConfig);
-    if (id === 'config_autoroles_clear_all') return AutoRoles.showClearAllAutoRolesConfirmation(interaction, serverConfig);
-    if (id === 'config_autoroles_confirm_clear') return AutoRoles.clearAllAutoRoles(interaction, serverConfig);
-    if (id === 'config_autoroles_cancel_clear') return AutoRoles.showAutoRolesConfig(interaction, serverConfig);
-
-    // Reactions actions
-    if (id === 'config_reactions_add') return Reactions.startEmojiAddProcess(interaction);
-    if (id === 'config_reactions_edit') return Reactions.showEditReactionSelect(interaction, serverConfig);
-    if (id === 'config_reactions_remove') return Reactions.showRemoveReactionSelect(interaction, serverConfig);
-    if (id === 'config_reactions_defaults') return Reactions.showDefaultReactionsPreview(interaction, serverConfig);
-    if (id === 'config_reactions_confirm_defaults') return Reactions.setupDefaultReactions(interaction, serverConfig);
-    if (id === 'config_reactions_cancel_defaults') return Reactions.showReactionConfig(interaction, serverConfig);
-    if (id === 'config_reactions_clear') return Reactions.showClearAllReactionsConfirmation(interaction);
-    if (id === 'config_reactions_confirm_clear') return Reactions.clearAllReactions(interaction);
-    if (id === 'config_reactions_cancel_clear') return Reactions.showReactionConfig(interaction, serverConfig);
-    if (id === 'config_reactions_cancel_add') return Reactions.handleEmojiAddCancel(interaction);
-    if (id === 'config_reaction_remove_select') {
-      const emoji = interaction.values[0];
-      return Reactions.removeReaction(interaction, serverConfig, emoji);
-    }
-
-    // Blocked Channels actions
-    if (id === 'config_blocked_channels_remove') return Blocked.showRemoveBlockedChannelSelect(interaction, serverConfig);
-    if (id === 'config_blocked_channels_clear') return Blocked.showClearAllBlockedChannelsConfirmation(interaction, serverConfig);
-    if (id === 'config_blocked_channels_clear_confirm') return Blocked.clearAllBlockedChannels(interaction, serverConfig);
-    if (id === 'config_blocked_channels_cancel_clear') return Blocked.showBlockedChannelsConfig(interaction, serverConfig);
-    if (id === 'config_blocked_channels_cancel_add') return Blocked.showBlockedChannelsConfig(interaction, serverConfig);
-    if (id === 'config_blocked_channels_remove_select') {
-      const value = interaction.values[0];
-      return Blocked.removeBlockedChannel(interaction, serverConfig, value);
-    }
-    if (id === 'config_blocked_channels_add') return Blocked.startBlockedChannelAddProcess(interaction);
-
-    // Leaderboard roles actions
-    if (id === 'config_leaderboard_roles_add_positive') return Leaderboard.showAddLeaderboardRoleModal(interaction, 'positive');
-    if (id === 'config_leaderboard_roles_add_negative') return Leaderboard.showAddLeaderboardRoleModal(interaction, 'negative');
-    if (id === 'config_leaderboard_roles_edit') return Leaderboard.showEditLeaderboardRoleSelect(interaction, serverConfig);
-    if (id === 'config_leaderboard_roles_remove') return Leaderboard.showRemoveLeaderboardRoleSelect(interaction, serverConfig);
-    if (id === 'config_leaderboard_roles_test') return Leaderboard.showLeaderboardRoleTestResults(interaction, serverConfig);
-    if (id === 'config_leaderboard_roles_clear_all') return Leaderboard.showClearAllLeaderboardRolesConfirmation(interaction, serverConfig);
-    if (id === 'config_leaderboard_roles_confirm_clear') return Leaderboard.clearAllLeaderboardRoles(interaction, serverConfig);
-    if (id === 'config_leaderboard_roles_cancel_clear') return Leaderboard.showLeaderboardRolesConfig(interaction, serverConfig);
-    if (id === 'config_leaderboard_roles_strategy_positive') return Leaderboard.toggleLeaderboardRoleStrategy(interaction, serverConfig, 'positive');
-    if (id === 'config_leaderboard_roles_strategy_negative') return Leaderboard.toggleLeaderboardRoleStrategy(interaction, serverConfig, 'negative');
-    if (id === 'config_leaderboard_role_remove_select') {
-      const [position, roleId, leaderboardType] = interaction.values[0].split(':');
-      return Leaderboard.removeLeaderboardRole(interaction, serverConfig, position, roleId, leaderboardType);
+    // Feature and action routing via map
+    const handler = ACTION_HANDLERS[interaction.customId];
+    if (handler) {
+      await handler(interaction, serverConfig);
+      return;
     }
 
     // Navigation fallback
@@ -350,4 +340,4 @@ async function handleModalSubmit(interaction) {
   }
 }
 
-module.exports = { handleConfigInteraction, routeConfigInteraction, canHandle, handleModalSubmit };
+module.exports = { handleConfigInteraction, routeConfigInteraction, handleModalSubmit };

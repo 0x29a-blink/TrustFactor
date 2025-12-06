@@ -344,17 +344,17 @@ async function handleAddAutoRoleModal(interaction, serverId) {
   const assignableRoles = getAssignableRoles(interaction.guild);
   const canAssign = assignableRoles.some((r) => r.id === roleIdValue);
   if (!canAssign) {
-    await interaction.followUp({ content: "❌ This role cannot be assigned by the bot.", flags: MessageFlags.Ephemeral });
+    await interaction.followUp({ content: '❌ This role cannot be assigned by the bot.', flags: MessageFlags.Ephemeral });
     return;
   }
   const updatedAutoRoles = { ...currentAutoRoles, [threshold]: roleIdValue };
   await updateServerConfig(serverId, { auto_role_thresholds: updatedAutoRoles });
-  await logConfigChange(interaction, 'Auto Roles', `Added role configuration`, `${threshold} points → @${role.name}`);
+  await logConfigChange(interaction, 'Auto Roles', 'Added role configuration', `${threshold} points → @${role.name}`);
 
   // Kick off auto-role assignment to immediately apply to eligible users
   try {
     await DatabaseUtils.assignAutoRoles(serverId, interaction.guild);
-  } catch (_) {}
+  } catch (_) { /* ignore */ }
 
   const embed = new EmbedBuilder()
     .setColor('#00ff00')
@@ -396,7 +396,7 @@ async function handleEditAutoRoleModal(interaction, serverId) {
   // Re-run assignment with updated thresholds
   try {
     await DatabaseUtils.assignAutoRoles(serverId, interaction.guild);
-  } catch (_) {}
+  } catch (_) { /* ignore */ }
   await showAutoRolesConfig(interaction, updatedConfig);
 }
 

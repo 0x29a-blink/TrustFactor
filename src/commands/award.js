@@ -1,9 +1,10 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, AttachmentBuilder } = require('discord.js');
 const DatabaseUtils = require('../utils/database');
 const VotingUtils = require('../utils/voting');
 const { isTestingMode, getPermissionLevel } = require('../utils/permissions');
 const AuditLogger = require('../utils/auditLogger');
 const logger = require('../utils/logger');
+const { renderAwardImage } = require('../utils/awardImage');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -98,6 +99,17 @@ module.exports = {
             const permissionLevel = getPermissionLevel(member);
             
             if (testingMode) {
+                // Generate Admin Override Image
+                const adminImageBuffer = await renderAwardImage({
+                    proposerName: proposer.globalName || proposer.username,
+                    targetName: targetUser.globalName || targetUser.username,
+                    points: points,
+                    reason: reason,
+                    action: points > 0 ? 'Point Award' : 'Point Deduction',
+                    status: 'ADMIN OVERRIDE'
+                });
+                const adminAttachment = new AttachmentBuilder(adminImageBuffer, { name: 'award_override.png' });
+
                 // Admin bypass: instantly apply points without voting
                 await DatabaseUtils.applyScoreChange(
                     targetUser.id,
@@ -147,8 +159,8 @@ module.exports = {
                     .setColor('#00ff00')
                     .setTitle('⚡ Admin Override - Points Applied!')
                     .setDescription(`**${targetUser}** has ${points > 0 ? 'received' : 'lost'} **${Math.abs(points)}** point${Math.abs(points) !== 1 ? 's' : ''}!`)
+                    .setImage('attachment://award_override.png')
                     .addFields([
-                        { name: 'Reason', value: reason, inline: false },
                         { name: 'Applied By', value: `${proposer} (${permissionLevel.toUpperCase()})`, inline: true },
                         { name: 'New Score', value: `${userScore} points`, inline: true },
                         { name: 'Mode', value: '🧪 Testing Mode', inline: true }
@@ -159,9 +171,21 @@ module.exports = {
                 logger.security(`Admin override: ${(proposer.globalName || proposer.username)} instantly awarded ${points} points to ${(targetUser.globalName || targetUser.username)}`, 'AWARD');
                 
                 return await interaction.reply({
-                    embeds: [successEmbed]
+                    embeds: [successEmbed],
+                    files: [adminAttachment]
                 });
             }
+
+            // Generate Proposal Image
+            const imageBuffer = await renderAwardImage({
+                proposerName: proposer.globalName || proposer.username,
+                targetName: targetUser.globalName || targetUser.username,
+                points: points,
+                reason: reason,
+                action: points > 0 ? 'Point Award' : 'Point Deduction',
+                status: 'PROPOSAL'
+            });
+            const attachment = new AttachmentBuilder(imageBuffer, { name: 'award.png' });
 
             // Calculate expiration time
             const expiresAt = new Date(Date.now() + (serverConfig.voting_timeout * 60 * 1000));
@@ -173,13 +197,12 @@ module.exports = {
             const embed = new EmbedBuilder()
                 .setColor(serverConfig.embed_color || '#5865F2')
                 .setTitle('🗳️ Point Award Proposal')
-                .setDescription(`**${proposer.globalName || proposer.username}** wants to ${points > 0 ? 'award' : 'deduct'} **${Math.abs(points)}** point${Math.abs(points) !== 1 ? 's' : ''} ${points > 0 ? 'to' : 'from'} ${targetUser}`)
+                .setDescription(`Vote required to ${points > 0 ? 'award' : 'deduct'} points.`)
+                .setImage('attachment://award.png')
                 .addFields([
-                    { name: 'Reason', value: reason, inline: false },
                     { name: 'Votes Needed', value: `${votesNeeded} approval${votesNeeded !== 1 ? 's' : ''}`, inline: true },
                     { name: 'Time Limit', value: `${serverConfig.voting_timeout} minute${serverConfig.voting_timeout !== 1 ? 's' : ''}`, inline: true }
                 ])
-                .setFooter({ text: 'Vote with the buttons below' })
                 .setTimestamp();
 
             // Create voting buttons (only if reaction mode is disabled)
@@ -209,7 +232,8 @@ module.exports = {
             // Send confirmation message
             await interaction.reply({
                 embeds: [embed],
-                components: components
+                components: components,
+                files: [attachment]
             });
 
             // Fetch the reply message to get its ID
@@ -278,9 +302,9 @@ module.exports = {
                 const updatedEmbed = new EmbedBuilder()
                     .setColor('#0099ff')
                     .setTitle('🏆 Point Award Proposal')
-                    .setDescription(`**${proposer.globalName || proposer.username}** wants to ${points > 0 ? 'award' : 'deduct'} **${Math.abs(points)}** point${Math.abs(points) !== 1 ? 's' : ''} ${points > 0 ? 'to' : 'from'} ${targetUser}`)
+                    .setDescription(`Vote required to ${points > 0 ? 'award' : 'deduct'} points.`)
+                    .setImage('attachment://award.png')
                     .addFields(
-                        { name: 'Reason', value: reason || 'No reason provided', inline: false },
                         { name: 'Progress', value: `${updatedVoteCounts.approveCount}/${votesNeeded} approval${votesNeeded !== 1 ? 's' : ''}`, inline: true },
                         { name: 'Rejections', value: `${updatedVoteCounts.rejectCount}`, inline: true }
                     )
@@ -290,7 +314,8 @@ module.exports = {
                 // Update the original message with current vote counts
                 await confirmationMessage.edit({
                     embeds: [updatedEmbed],
-                    components: components // Keep the original buttons
+                    components: components, // Keep the original buttons
+                    files: [attachment]
                 });
             }
             
@@ -326,13 +351,24 @@ module.exports = {
                     // Mark vote as approved
                     await DatabaseUtils.updateVoteStatus(pendingVote.id, 'approved');
                 
+                // Generate Approved Image
+                const approvedImageBuffer = await renderAwardImage({
+                    proposerName: proposer.globalName || proposer.username,
+                    targetName: targetUser.globalName || targetUser.username,
+                    points: points,
+                    reason: reason || 'No reason provided',
+                    action: points > 0 ? 'Point Award' : 'Point Deduction',
+                    status: 'APPROVED'
+                });
+                const approvedAttachment = new AttachmentBuilder(approvedImageBuffer, { name: 'award_approved.png' });
+
                 // Create success embed without vote buttons
                 const successEmbed = new EmbedBuilder()
                     .setColor('#00ff00')
                     .setTitle('✅ Award Approved!')
                     .setDescription(`${(proposer.globalName || proposer.username)} awarded **${points} point${points !== 1 ? 's' : ''}** to ${(targetUser.globalName || targetUser.username)}`)
+                    .setImage('attachment://award_approved.png')
                     .addFields(
-                        { name: 'Reason', value: reason || 'No reason provided', inline: false },
                         { name: 'New Score', value: `${result.total_score} points`, inline: true },
                         { name: 'Status', value: 'Approved automatically', inline: true }
                     )
@@ -341,7 +377,8 @@ module.exports = {
                 // Edit the original message to remove vote buttons and show success
                 await confirmationMessage.edit({ 
                     embeds: [successEmbed], 
-                    components: [] // Remove vote buttons
+                    components: [], // Remove vote buttons
+                    files: [approvedAttachment]
                 });
                 
                 // Send confirmation reply to the user

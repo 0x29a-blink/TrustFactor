@@ -68,7 +68,7 @@ if (client.shard) {
             if (typeof shardId === 'number') {
                 logger.lifecycle(`Client ready on shard ${shardId}`, 'SHARD');
             }
-        } catch (_) {}
+        } catch (_) { /* ignore */ }
     });
 }
 

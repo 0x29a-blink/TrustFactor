@@ -38,3 +38,5 @@ test_render.js
 font_test.png
 test_award.png
 *.test.js.snap
+
+deploy_guide.md

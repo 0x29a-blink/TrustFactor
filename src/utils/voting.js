@@ -736,6 +736,11 @@ class VotingUtils {
             
             const targetName = targetUser.globalName || targetUser.username || 'Unknown User';
 
+            // Get final vote counts and requirements
+            const voteCounts = await DatabaseUtils.getVoteCount(pendingVote.id);
+            const serverConfig = await DatabaseUtils.getServerConfig(pendingVote.server_id);
+            const requiredVotes = this.calculateRequiredVotes(serverConfig, pendingVote.point_change);
+
             // Generate Expired Image
             const imageBuffer = await renderAwardImage({
                 proposerName,
@@ -743,19 +748,23 @@ class VotingUtils {
                 points: pendingVote.point_change,
                 reason: pendingVote.reason,
                 action: pendingVote.point_change > 0 ? 'Point Award' : 'Point Deduction',
-                status: 'EXPIRED'
+                status: 'EXPIRED',
+                voteProgress: {
+                    approve: voteCounts.approveCount,
+                    reject: voteCounts.rejectCount,
+                    needed: requiredVotes
+                }
             });
             const attachment = new AttachmentBuilder(imageBuffer, { name: 'award_expired.png' });
 
             // Create timeout embed
-            const serverConfig = await DatabaseUtils.getServerConfig(pendingVote.server_id);
             const timeoutEmbed = new EmbedBuilder()
                 .setColor('#ff6b6b')
                 .setTitle('⏰ Vote Expired')
                 .setDescription(`Vote timed out - ${targetUser} did not receive **${pendingVote.point_change > 0 ? '+' : ''}${pendingVote.point_change}** point${Math.abs(pendingVote.point_change) !== 1 ? 's' : ''}`)
                 .setImage('attachment://award_expired.png')
                 .addFields([
-                    { name: 'Status', value: 'Expired - insufficient votes', inline: true },
+                    { name: 'Status', value: `Expired - insufficient votes (${voteCounts.approveCount}/${requiredVotes} approvals)`, inline: true },
                     { name: 'Time Limit', value: `${serverConfig.voting_timeout} minute${serverConfig.voting_timeout !== 1 ? 's' : ''}`, inline: true }
                 ])
                 .setTimestamp();
@@ -778,7 +787,6 @@ class VotingUtils {
             }
             
             // Log the vote expiration
-            const voteCounts = await DatabaseUtils.getVoteCount(pendingVote.id);
             await AuditLogger.logVoteEvent(client, pendingVote.server_id, {
                 approved: false,
                 voteId: pendingVote.id,
@@ -786,14 +794,14 @@ class VotingUtils {
                 proposedBy: pendingVote.proposer_id,
                 points: pendingVote.point_change,
                 approveCount: voteCounts.approveCount,
-                threshold: this.calculateRequiredVotes(serverConfig, pendingVote.point_change),
+                threshold: requiredVotes,
                 proposalReason: pendingVote.reason,
                 reason: 'Vote expired - time limit exceeded'
             });
             
             // Send feedback message if enabled
             if (serverConfig.failed_feedback) {
-                await message.reply(`❌ Vote expired for ${targetUser} - insufficient votes within the time limit`);
+                await message.reply(`❌ Vote expired for ${targetUser} - insufficient votes within the time limit (${voteCounts.approveCount}/${requiredVotes} approvals)`);
             }
             
             logger.vote(`Vote expired: ${(targetUser.globalName || targetUser.username || targetUser.displayName || 'Unknown User')} did not receive ${pendingVote.point_change} points`, 'EXPIRE');

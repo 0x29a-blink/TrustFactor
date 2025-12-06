@@ -1,23 +1,21 @@
-const { chromium } = require('playwright');
+const { getBrowser } = require('./browserService');
 const logger = require('./logger');
 
 // Cache browser instance if needed, but for stability in bots, per-request is often safer 
 // unless volume is high. We'll start with per-request to ensure clean state.
 
 async function renderHtmlToImage(htmlContent, width, height) {
-    let browser = null;
+    let context = null;
+    let page = null;
     try {
-        browser = await chromium.launch({
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--font-render-hinting=none'],
-            headless: true
-        });
+        const browser = await getBrowser();
 
-        const context = await browser.newContext({
+        context = await browser.newContext({
             viewport: { width, height },
             deviceScaleFactor: 2 // 2x for high DPI
         });
 
-        const page = await context.newPage();
+        page = await context.newPage();
 
         // Wrap content with complete HTML structure and Google Fonts
         // Noto Sans Math covers many mathematical symbols
@@ -68,8 +66,11 @@ async function renderHtmlToImage(htmlContent, width, height) {
         logger.errorWithStack('Failed to render HTML to image', error, 'RENDER');
         throw error;
     } finally {
-        if (browser) {
-            await browser.close();
+        if (page) {
+            try { await page.close(); } catch (e) { /* ignore */ }
+        }
+        if (context) {
+            try { await context.close(); } catch (e) { /* ignore */ }
         }
     }
 }

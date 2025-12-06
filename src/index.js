@@ -3,6 +3,7 @@ const { Client, GatewayIntentBits, Partials, Collection } = require('discord.js'
 const fs = require('fs');
 const path = require('path');
 const logger = require('./utils/logger');
+const { initBrowser, closeBrowser } = require('./utils/browserService');
 
 // Initialize Discord client with required intents and partials
 const client = new Client({
@@ -77,10 +78,21 @@ process.on('unhandledRejection', error => {
     logger.errorWithStack('Unhandled promise rejection', error, 'PROCESS');
 });
 
-process.on('uncaughtException', error => {
+process.on('uncaughtException', async error => {
     logger.errorWithStack('Uncaught exception', error, 'PROCESS');
+    await closeBrowser();
     process.exit(1);
 });
+
+// Graceful shutdown
+const cleanup = async (signal) => {
+    logger.lifecycle(`Received ${signal}, shutting down...`, 'PROCESS');
+    await closeBrowser();
+    client.destroy();
+    process.exit(0);
+};
+process.on('SIGINT', () => cleanup('SIGINT'));
+process.on('SIGTERM', () => cleanup('SIGTERM'));
 
 // Resolve environment profile (e.g., 'main' or 'dev') and pick suffixed vars if present
 const PROFILE = (process.env.BOT_PROFILE || process.env.ENV_PROFILE || 'dev').toLowerCase();
@@ -94,7 +106,13 @@ if (!discordToken) {
     process.exit(1);
 }
 
-client.login(discordToken).catch(error => {
-    logger.errorWithStack('Failed to login to Discord', error, 'LOGIN');
+// Initialize browser then login
+initBrowser().then(() => {
+    client.login(discordToken).catch(error => {
+        logger.errorWithStack('Failed to login to Discord', error, 'LOGIN');
+        closeBrowser().finally(() => process.exit(1));
+    });
+}).catch(error => {
+    logger.errorWithStack('Failed to initialize browser', error, 'INIT');
     process.exit(1);
 });

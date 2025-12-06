@@ -3,11 +3,25 @@ const { toIdString, asText } = require('../ids');
 const { getServerSyncStatus, isServerPriority } = require('../syncUtils');
 const logger = require('../logger');
 
+// Simple in-memory cache for server configs
+const configCache = new Map();
+const CONFIG_CACHE_TTL = 60 * 1000; // 60 seconds
+
 /**
  * Config and preferences related DB utilities
  */
 
 async function getServerConfig(serverId) {
+  // Check cache first
+  const cacheKey = String(serverId);
+  if (configCache.has(cacheKey)) {
+    const { data, expires } = configCache.get(cacheKey);
+    if (Date.now() < expires) {
+      return data;
+    }
+    configCache.delete(cacheKey);
+  }
+
   try {
     // Check if server is in sync group but not priority - use priority server's config
     const syncStatus = await getServerSyncStatus(serverId);
@@ -39,7 +53,10 @@ async function getServerConfig(serverId) {
           `)
           .eq('server_id', toIdString(serverId))
           .single();
-        if (!fallbackError) return fallbackData;
+        if (!fallbackError) {
+          configCache.set(cacheKey, { data: fallbackData, expires: Date.now() + CONFIG_CACHE_TTL });
+          return fallbackData;
+        }
       }
 
       // Insert defaults
@@ -64,10 +81,14 @@ async function getServerConfig(serverId) {
         .select()
         .single();
       if (insertError) throw insertError;
+      
+      configCache.set(cacheKey, { data: newServer, expires: Date.now() + CONFIG_CACHE_TTL });
       return newServer;
     }
 
     if (error) throw error;
+    
+    configCache.set(cacheKey, { data, expires: Date.now() + CONFIG_CACHE_TTL });
     return data;
   } catch (error) {
     logger.errorWithStack('Error getting server config', error, 'DB');
